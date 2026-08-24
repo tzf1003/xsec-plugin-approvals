@@ -1,0 +1,25 @@
+{
+  "name": "com.xsec.workspace.approvals",
+  "version": "1.0.0",
+  "description": "XSEC session approval workspace tool",
+  "author": {
+    "name": "XSEC"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/tzf1003/xsec-plugins",
+  "interface": {
+    "displayName": "审批记录",
+    "shortDescription": "XSEC session approval workspace tool",
+    "longDescription": "XSEC 官方插件：审批记录。可在 XSEC 插件市场安装、禁用和更新。",
+    "developerName": "XSEC",
+    "category": "Security",
+    "capabilities": [
+      "XSEC Desktop"
+    ],
+    "websiteURL": "https://github.com/tzf1003/xsec-plugins",
+    "defaultPrompt": [
+      "打开 审批记录"
+    ],
+    "brandColor": "#4F7CFF"
+  }
+}
