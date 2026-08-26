@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "com.xsec.workspace.approvals",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "XSEC session approval workspace tool",
   "author": { "name": "XSEC" },
   "license": "MIT",
@@ -9,16 +9,20 @@
     "schemaVersion": 1, "displayName": "审批记录", "publisher": "XSEC", "icon": "clipboard-check",
     "engines": { "xsec": ">=0.1.0", "pluginApi": "^1.2.0" },
     "entrypoints": { "frontend": "./com.xsec.desktop/frontend/index.js" },
-    "activationEvents": ["onWorkspaceTool:approvals"],
-    "permissions": { "workspace.session.read": {} },
+    "activationEvents": ["onWorkspaceTool:approvals", "onSettingsPage:approvals"],
+    "permissions": { "workspace.session.read": {}, "pluginData.read": {}, "pluginData.write": {} },
     "frontendApi": { "version": 2, "module": "single-esm", "methods": {
       "xsec.approvals.list": { "capability": "workspace.session.read", "binding": "session" },
-      "xsec.approvals.statistics": { "capability": "workspace.session.read", "binding": "session" }
+      "xsec.approvals.statistics": { "capability": "workspace.session.read", "binding": "session" },
+      "xsec.approvals.settings.get": { "capability": "pluginData.read", "binding": "plugin" },
+      "xsec.approvals.settings.set": { "capability": "pluginData.write", "binding": "plugin" }
     } },
     "contributes": { "workspaceTools": { "approvals": {
       "title": "审批记录", "icon": "clipboard-check", "scope": "session", "launchable": true,
       "policy": "singleton", "surface": "standard", "retain": "active", "preferredBottomHeight": 340,
       "surfaces": ["interactive-dock", "batch-observe"]
-    } } }
+    } }, "settingsPages": {
+      "approvals": { "title": "审批记录", "group": "plugins", "page": "approvals", "icon": "clipboard-check", "order": 130 }
+    } }
   } }
 }
