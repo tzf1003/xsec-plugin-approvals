@@ -1,0 +1,20 @@
+name: Plugin source validation
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+    branches: [main, beta]
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the dual plugin manifests
+        run: |
+          test -f plugins/com.xsec.workspace.approvals/plugin.json
+          test -f plugins/com.xsec.workspace.approvals/.codex-plugin/plugin.json
