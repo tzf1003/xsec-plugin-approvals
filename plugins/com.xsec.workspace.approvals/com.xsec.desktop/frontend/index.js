@@ -40,7 +40,6 @@ function applyTheme(theme) {
   const mode = theme?.["color-mode"] || getComputedStyle(document.documentElement).getPropertyValue("--xsec-color-mode").trim();
   document.documentElement.dataset.xsecTheme = mode === "light" ? "light" : "dark";
 }
-function trackTheme(pluginHost) { applyTheme({}); return pluginHost.onTheme((theme) => applyTheme(theme)); }
 function isNumericSetting(value) { return typeof value === "number" && Number.isFinite(value); }
 function validSettings(settings) {
   const threshold = Number(settings?.low_confidence_threshold); const timeout = Number(settings?.llm?.timeout_ms);
@@ -103,7 +102,7 @@ function detailFingerprint(row) {
 
 export function activate(host) {
   function settingsPage() {
-    let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let saveInFlight = false; let reloadQueued = false;
+    let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let saveInFlight = false; let reloadQueued = false; let disposed = false; let lifecycleRevision = 0;
     const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
     async function readSettings() {
       try { return await host.request("xsec.approvals.settings.get", {}); }
@@ -134,7 +133,7 @@ export function activate(host) {
       if (!timeoutText || !Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS) return notice("模型超时必须是不小于 1000 毫秒的安全整数。", true);
       if (fullAccess && (!acknowledged || !controls.acknowledge.checked)) return notice("启用完全访问前，请确认风险声明并输入确认语句。", true);
       controls.save.disabled = true; controls.retry.disabled = true;
-      const revision = ++loadRevision; saveInFlight = true; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
+      const revision = ++loadRevision; const lifecycle = lifecycleRevision; saveInFlight = true; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
       try {
         const settings = await writeSettings({ autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
         if (revision !== loadRevision) return;
@@ -143,8 +142,10 @@ export function activate(host) {
         notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
       } catch (error) { if (revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
         saveInFlight = false;
-        if (reloadQueued) { reloadQueued = false; void load(); }
-        else if (revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; }
+        const shouldReload = reloadQueued && !disposed && lifecycle === lifecycleRevision;
+        reloadQueued = false;
+        if (shouldReload) void load();
+        else if (!disposed && lifecycle === lifecycleRevision && revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; }
       }
     }
     function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
@@ -165,7 +166,7 @@ export function activate(host) {
       page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
       root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); console.info("approvals.settings.mount"); void load();
     }
-    return { mount(nextRoot, nextContext) { themeSubscription?.dispose(); root = nextRoot; contextKey = settingsContextKey(nextContext); build(); themeSubscription = trackTheme(host); }, update(nextContext) { const nextContextKey = settingsContextKey(nextContext); if (nextContextKey === contextKey) return; contextKey = nextContextKey; if (saveInFlight) { reloadQueued = true; return; } return load(); }, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
+    return { mount(nextRoot, nextContext) { themeSubscription?.dispose(); disposed = false; lifecycleRevision += 1; root = nextRoot; contextKey = settingsContextKey(nextContext); build(); applyTheme({}); themeSubscription = host.onTheme((theme) => applyTheme(theme)); }, update(nextContext) { const nextContextKey = settingsContextKey(nextContext); if (nextContextKey === contextKey) return; contextKey = nextContextKey; if (saveInFlight) { reloadQueued = true; return; } return load(); }, dispose() { console.debug("approvals.settings.dispose"); disposed = true; lifecycleRevision += 1; reloadQueued = false; themeSubscription?.dispose(); } };
   }
   console.debug("approvals.activate", { surface: host.context?.kind === "settings-page" ? "settings" : "workspace" });
   if (host.context?.kind === "settings-page") return settingsPage();
@@ -232,5 +233,5 @@ export function activate(host) {
     select.value = state.decision; input.value = state.tool; select.onchange = () => { console.info("approvals.workspace.decision.changed", { decision: select.value || "all" }); state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render(); console.info("approvals.workspace.mount");
   }
   function updateWindows() { controls.windows.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === state.window))); }
-  return { mount(nextRoot, nextContext) { window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); state.disposed = false; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); const mountRevision = state.mountRevision; timer = window.setInterval(() => { if (mountRevision === state.mountRevision && state.autoRefresh && !state.refreshInFlight && document.visibilityState === "visible") void refresh({ queueIfInFlight: false, silent: true }); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); state.disposed = true; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
+  return { mount(nextRoot, nextContext) { window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); state.disposed = false; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; root = nextRoot; context = nextContext; build(); applyTheme({}); themeSubscription = host.onTheme((theme) => applyTheme(theme)); const mountRevision = state.mountRevision; timer = window.setInterval(() => { if (mountRevision === state.mountRevision && state.autoRefresh && !state.refreshInFlight && document.visibilityState === "visible") void refresh({ queueIfInFlight: false, silent: true }); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); state.disposed = true; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
 }

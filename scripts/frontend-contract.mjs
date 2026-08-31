@@ -50,6 +50,7 @@ function isDirectCall(node, parent) {
 function patternBindsHost(pattern) {
   if (pattern?.type === "Identifier") return pattern.name === "host";
   if (pattern?.type === "RestElement" || pattern?.type === "AssignmentPattern") return patternBindsHost(pattern.argument ?? pattern.left);
+  if (pattern?.type === "ArrayPattern") return pattern.elements.some(patternBindsHost);
   return pattern?.type === "ObjectPattern" && pattern.properties.some((property) => patternBindsHost(property.value ?? property.argument));
 }
 
@@ -62,10 +63,11 @@ function declarationBindsHost(node, activationParameter) {
   return node.type === "ImportDeclaration" && node.specifiers.some((specifier) => specifier.local?.name === "host");
 }
 
-function validatesHostBinding(node, activationParameter) {
+function validatesHostBinding(node, parent, activationParameter) {
   if (node === activationParameter) return;
   if (declarationBindsHost(node, activationParameter)) fail("frontend cannot shadow the activation host parameter");
   if (node.type === "AssignmentExpression" && patternBindsHost(node.left)) fail("frontend cannot reassign the activation host parameter");
+  if (isHost(node) && !(parent?.type === "MemberExpression" && parent.object === node)) fail("frontend host parameter can only be used as a direct member receiver");
 }
 
 function activationHostParameter(program) {
@@ -129,7 +131,7 @@ export function frontendRequestMethods(source) {
       || ((node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") && node.source !== null)) {
       fail("frontend must be a single ESM file without module dependencies");
     }
-    validatesHostBinding(node, activationParameter);
+    validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
     if (node.type === "CallExpression") {
       const method = requestMethod(node);
