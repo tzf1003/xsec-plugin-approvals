@@ -1,11 +1,14 @@
 // XSEC Frontend API v2 — single-file ESM.  All data comes through the
 // manifest-declared broker methods; the iframe has no direct Tauri access.
 const DECISIONS = { allowed: ["允许", "success"], denied: ["拒绝", "danger"], manual_review: ["人工审批", "warning"], bypass: ["绕过", "volcano"], error: ["错误", "magenta"] };
-const FILTER_DECISIONS = ["allowed", "denied", "manual_review", "bypass"];
+const FILTER_DECISIONS = ["allowed", "denied", "manual_review", "bypass", "error"];
 const RISKS = { low: "低", medium: "中", high: "高", critical: "严重" };
 const MODES = { manual: "人工", auto_llm: "LLM", full_access: "完全访问" };
 const WINDOWS = [["all", "全部"], ["24h", "24 小时"], ["7d", "7 天"], ["30d", "30 天"]];
 const WINDOW_MS = { "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
+const MIN_CONFIDENCE = 0;
+const MAX_CONFIDENCE = 1;
+const MIN_TIMEOUT_MS = 1_000;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -42,7 +45,7 @@ function addStyles(root) {
 }
 
 function settingsPage(host) {
-  let root; let controls; let ready = false; let themeSubscription;
+  let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0;
   const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
   const resolved = (settings) => {
     const value = settings?.resolved_model;
@@ -51,24 +54,30 @@ function settingsPage(host) {
       : `模型状态：${settings?.api_key_configured ? "使用当前会话模型" : "尚未配置固定审批模型"}`;
   };
   async function load() {
+    const revision = ++loadRevision;
     ready = false; controls.save.disabled = true; controls.retry.disabled = true; notice("正在读取审批设置…");
     try {
       const settings = await host.request("xsec.approvals.settings.get", {});
+      if (revision !== loadRevision) return;
       const thresholdValue = Number(settings?.low_confidence_threshold); const timeoutValue = Number(settings?.llm?.timeout_ms);
-      if (!isRecord(settings) || !isRecord(settings.llm) || !Number.isFinite(thresholdValue) || !Number.isFinite(timeoutValue)) throw new Error("审批设置响应无效");
+      if (!isRecord(settings) || !isRecord(settings.llm) || !Number.isFinite(thresholdValue) || thresholdValue < MIN_CONFIDENCE || thresholdValue > MAX_CONFIDENCE || timeoutValue < MIN_TIMEOUT_MS) throw new Error("审批设置响应无效");
       controls.auto.checked = Boolean(settings.auto_enabled); controls.full.checked = Boolean(settings.full_access);
       controls.readonly.checked = settings.allow_local_readonly !== false; controls.threshold.value = String(thresholdValue);
       controls.model.value = settings.llm.use_default_model ? "" : (typeof settings.llm.model === "string" ? settings.llm.model : ""); controls.timeout.value = String(timeoutValue);
       resolved(settings); ready = true; controls.save.disabled = false; notice("");
-    } catch (error) { notice(`读取审批设置失败：${errorText(error)}`, true); } finally { controls.retry.disabled = false; }
+    } catch (error) { if (revision === loadRevision) notice(`读取审批设置失败：${errorText(error)}`, true); } finally { if (revision === loadRevision) controls.retry.disabled = false; }
   }
   async function save() {
     if (!ready) return notice("请先成功读取当前审批设置后再保存。", true);
     const fullAccess = controls.full.checked; const acknowledged = !fullAccess || controls.confirm.value === "我确认启用完全访问权限";
+    const thresholdText = controls.threshold.value.trim(); const threshold = Number(thresholdText);
+    const timeoutText = controls.timeout.value.trim(); const timeoutMs = Number(timeoutText);
+    if (!thresholdText || !Number.isFinite(threshold) || threshold < MIN_CONFIDENCE || threshold > MAX_CONFIDENCE) return notice("低置信度阈值必须是 0 到 1 之间的数字。", true);
+    if (!timeoutText || !Number.isFinite(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS) return notice("模型超时必须至少为 1000 毫秒。", true);
     if (!acknowledged) return notice("启用完全访问前，请输入确认语句。", true);
     controls.save.disabled = true; controls.retry.disabled = true;
     try {
-      await host.request("xsec.approvals.settings.set", { autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: Number(controls.threshold.value), llm: { model: controls.model.value.trim(), timeoutMs: Number(controls.timeout.value), temperature: 0 }, fullAccessAcknowledged: acknowledged });
+      await host.request("xsec.approvals.settings.set", { autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
       const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
       await load(); if (ready) notice(saved);
     } catch (error) { notice(`保存审批设置失败：${errorText(error)}`, true); } finally { controls.save.disabled = !ready; controls.retry.disabled = false; }
