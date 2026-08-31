@@ -114,7 +114,7 @@ function settingsPage(host) {
       applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true;
       const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
       notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
-    } catch (error) { notice(`保存审批设置失败：${errorText(error)}`, true); } finally { controls.save.disabled = !ready; controls.retry.disabled = false; }
+    } catch (error) { if (revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally { if (revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; } }
   }
   function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
   function build() {
@@ -162,7 +162,7 @@ function detailFingerprint(row) {
 export function activate(host) {
   console.debug("approvals.activate", { surface: host.context?.kind === "settings-page" ? "settings" : "workspace" });
   if (host.context?.kind === "settings-page") return settingsPage(host);
-  let root; let context = host.context; let controls; let themeSubscription; let timer; let debounce; let state = { session: undefined, revision: 0, rows: undefined, stats: undefined, autoRefresh: false, detailRequestId: undefined, detailFingerprint: undefined, refreshInFlight: false, refreshQueued: false, disposed: false, tool: "", decision: "", window: "all" };
+  let root; let context = host.context; let controls; let themeSubscription; let timer; let debounce; let state = { session: undefined, revision: 0, mountRevision: 0, rows: undefined, stats: undefined, autoRefresh: false, detailRequestId: undefined, detailFingerprint: undefined, refreshInFlight: false, refreshQueued: false, disposed: false, tool: "", decision: "", window: "all" };
   const status = (message, failed = false) => { controls.status.textContent = message; controls.status.dataset.tone = failed ? "error" : ""; };
   const invalidate = () => { state.revision += 1; };
   const showStats = () => {
@@ -194,7 +194,7 @@ export function activate(host) {
     return { rows, stats };
   };
   async function refresh(options = {}) {
-    const queueIfInFlight = options.queueIfInFlight !== false; const silent = options.silent === true; const session = sessionIdFrom(context);
+    const queueIfInFlight = options.queueIfInFlight !== false; const silent = options.silent === true; const mountRevision = state.mountRevision; const session = sessionIdFrom(context);
     if (!session) { resetSession(undefined); state.refreshQueued = false; controls.refresh.disabled = false; status("进入会话后查看该会话的审批记录。"); return; }
     if (session !== state.session) resetSession(session);
     if (state.refreshInFlight) { if (queueIfInFlight) state.refreshQueued = true; return; }
@@ -203,10 +203,10 @@ export function activate(host) {
     try {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
-      if (revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
-    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+      if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
+    } catch (error) { if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+      if (mountRevision !== state.mountRevision || state.disposed) return;
       state.refreshInFlight = false; const queued = state.refreshQueued; state.refreshQueued = false;
-      if (state.disposed) return;
       if (queued) { void refresh(); return; }
       controls.refresh.disabled = false;
     }
@@ -222,8 +222,8 @@ export function activate(host) {
     root.replaceChildren(); addStyles(root); const page = element("section", "xsec-approvals"); const summary = element("div", "approval-card approval-summary"); const card = element("section", "approval-card"); const head = element("header", "approval-card-head"); const refreshButton = element("button", "approval-button", "刷新"); refreshButton.type = "button"; refreshButton.onclick = () => { console.info("approvals.workspace.refresh.requested"); void refresh(); }; head.append(element("h1", "approval-card-title", "本会话审批记录"), refreshButton);
     const toolbar = element("div", "approval-toolbar"); const windowGroup = element("span", "approval-toolbar"); const select = element("select", "approval-select"); const input = element("input", "approval-input"); input.placeholder = "工具名"; input.type = "search"; [["", "决策"], ...FILTER_DECISIONS.map((key) => [key, DECISIONS[key][0]])].forEach(([value, label]) => { const option = element("option", "", label); option.value = value; select.append(option); });
     for (const [value, label] of WINDOWS) { const button = element("button", "approval-button approval-window", label); button.type = "button"; button.dataset.value = value; button.onclick = () => { if (state.window !== value) { console.info("approvals.workspace.window.changed", { window: value }); state.window = value; invalidate(); updateWindows(); void refresh(); } }; windowGroup.append(button); }
-    select.onchange = () => { console.info("approvals.workspace.decision.changed", { decision: select.value || "all" }); state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render(); console.info("approvals.workspace.mount");
+    select.value = state.decision; input.value = state.tool; select.onchange = () => { console.info("approvals.workspace.decision.changed", { decision: select.value || "all" }); state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render(); console.info("approvals.workspace.mount");
   }
   function updateWindows() { controls.windows.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === state.window))); }
-  return { mount(nextRoot, nextContext) { root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); timer = window.setInterval(() => { if (state.autoRefresh && !state.refreshInFlight && document.visibilityState === "visible") void refresh({ queueIfInFlight: false, silent: true }); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); state.disposed = true; state.refreshQueued = false; invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
+  return { mount(nextRoot, nextContext) { window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); state.disposed = false; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); const mountRevision = state.mountRevision; timer = window.setInterval(() => { if (mountRevision === state.mountRevision && state.autoRefresh && !state.refreshInFlight && document.visibilityState === "visible") void refresh({ queueIfInFlight: false, silent: true }); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); state.disposed = true; state.refreshQueued = false; state.refreshInFlight = false; state.mountRevision += 1; invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
 }

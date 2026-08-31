@@ -1,13 +1,14 @@
 import Ajv2020 from "ajv/dist/2020.js";
-import { parse } from "acorn";
 import semver from "semver";
 import { constants } from "node:fs";
 import { access, lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, posix, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { frontendRequestMethods } from "./frontend-contract.mjs";
 
 const PLUGIN_ID = "com.xsec.workspace.approvals";
 const SCHEMA_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+const BACKSLASH = "\\";
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PLUGIN_ROOT = resolve(process.argv[2] ?? `${ROOT}/plugins/${PLUGIN_ID}`);
 const IGNORED_DIRECTORIES = new Set([".git", ".xsec-build", ".xsec-market", "node_modules", "__pycache__"]);
@@ -17,7 +18,6 @@ const MARKET_KEYS = new Set(["name", "version", "description", "author", "licens
 const INTERFACE_KEYS = new Set(["displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "websiteURL", "defaultPrompt", "brandColor"]);
 const NAME_PATTERN = /^(?=.{1,64}$)[a-z0-9](?!.*(?:--|\.\.))[a-z0-9.-]*[a-z0-9]$|^[a-z0-9]$/;
 const ENTRYPOINT_COMPONENTS = /^[\x20-\x7e]+$/;
-const RPC_METHOD_PATTERN = /^xsec\.[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 const REQUIRED_RPC_METHODS = new Set(["xsec.approvals.list", "xsec.approvals.statistics", "xsec.approvals.settings.get", "xsec.approvals.settings.set"]);
 const REQUIRED_ACTIVATIONS = new Map([
   ["onWorkspaceTool:approvals", "workspaceTools"],
@@ -166,43 +166,6 @@ async function syntaxCheck(path) {
   });
 }
 
-function unwrapChain(node) {
-  return node?.type === "ChainExpression" ? node.expression : node;
-}
-
-function memberName(member) {
-  if (!member.computed && member.property.type === "Identifier") return member.property.name;
-  if (member.computed && member.property.type === "Literal" && typeof member.property.value === "string") return member.property.value;
-  return undefined;
-}
-
-function frontendRequestMethod(node) {
-  const callee = unwrapChain(node.callee);
-  if (node.type !== "CallExpression" || callee?.type !== "MemberExpression" || unwrapChain(callee.object)?.name !== "host" || memberName(callee) !== "request") return undefined;
-  const method = node.arguments[0];
-  if (method?.type !== "Literal" || typeof method.value !== "string" || !RPC_METHOD_PATTERN.test(method.value)) fail("frontend host.request calls must use literal XSEC RPC method names");
-  return method.value;
-}
-
-function visitAst(node, callback) {
-  if (!isRecord(node)) return;
-  callback(node);
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) value.forEach((entry) => visitAst(entry, callback));
-    else if (isRecord(value) && typeof value.type === "string") visitAst(value, callback);
-  }
-}
-
-function frontendRequestMethods(source) {
-  const methods = new Set();
-  const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
-  visitAst(program, (node) => {
-    const method = frontendRequestMethod(node);
-    if (method) methods.add(method);
-  });
-  return methods;
-}
-
 async function validateFrontendRequests(extension) {
   const frontend = extension.entrypoints?.frontend;
   if (!frontend || !extension.frontendApi) fail("approvals must declare a frontend entrypoint and frontendApi");
@@ -240,6 +203,7 @@ function validateArchiveComponent(component, archivePath) {
 async function validatePortableTree(current = PLUGIN_ROOT, paths = new Map()) {
   for (const entry of await readdir(current, { withFileTypes: true })) {
     if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
+    if (entry.name.includes(BACKSLASH)) fail("plugin tree path contains a backslash: " + entry.name);
     const absolute = resolve(current, entry.name);
     const archivePath = relative(PLUGIN_ROOT, absolute).replaceAll("\\", "/");
     if (!archivePath || archivePath.includes("\\") || archivePath.split("/").some((part) => !part || part === "." || part === "..")) fail(`plugin tree path is unsafe: ${archivePath || absolute}`);
