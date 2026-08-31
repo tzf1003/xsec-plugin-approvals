@@ -31,12 +31,57 @@ function isHost(node) {
   return unwrapChain(node)?.type === "Identifier" && unwrapChain(node).name === "host";
 }
 
+function isHostReference(node, parent) {
+  if (!isHost(node)) return false;
+  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  if (["MethodDefinition", "PropertyDefinition", "FieldDefinition"].includes(parent?.type) && parent.key === node && !parent.computed) return false;
+  return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
+}
+
 function isHostRequestMember(node) {
   return node?.type === "MemberExpression" && isHost(node.object) && memberName(node) === "request";
 }
 
+function usesComputedHostMember(node) {
+  return node?.type === "MemberExpression" && isHost(node.object) && node.computed;
+}
+
 function isRequestMember(node) {
   return node?.type === "MemberExpression" && memberName(node) === "request";
+}
+
+function isDirectCall(node, parent) {
+  return parent?.type === "CallExpression" && unwrapChain(parent.callee) === node;
+}
+
+function patternBindsHost(pattern) {
+  if (pattern?.type === "Identifier") return pattern.name === "host";
+  if (pattern?.type === "RestElement" || pattern?.type === "AssignmentPattern") return patternBindsHost(pattern.argument ?? pattern.left);
+  if (pattern?.type === "ArrayPattern") return pattern.elements.some(patternBindsHost);
+  return pattern?.type === "ObjectPattern" && pattern.properties.some((property) => patternBindsHost(property.value ?? property.argument));
+}
+
+function declarationBindsHost(node, activationParameter) {
+  if ((node.type === "VariableDeclarator" || node.type === "CatchClause") && patternBindsHost(node.id ?? node.param)) return true;
+  if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)) {
+    return node.id?.name === "host" || node.params.some((parameter) => parameter !== activationParameter && patternBindsHost(parameter));
+  }
+  if (["ClassDeclaration", "ClassExpression"].includes(node.type)) return node.id?.name === "host";
+  return node.type === "ImportDeclaration" && node.specifiers.some((specifier) => specifier.local?.name === "host");
+}
+
+function validatesHostBinding(node, parent, activationParameter) {
+  if (node === activationParameter) return;
+  if (declarationBindsHost(node, activationParameter)) fail("frontend cannot shadow the activation host parameter");
+  if (node.type === "AssignmentExpression" && patternBindsHost(node.left)) fail("frontend cannot reassign the activation host parameter");
+  if (isHostReference(node, parent) && !(parent?.type === "MemberExpression" && parent.object === node)) fail("frontend host parameter can only be used as a direct member receiver");
+}
+
+function activationHostParameter(program) {
+  const activation = program.body.find((node) => node.type === "ExportNamedDeclaration" && node.declaration?.type === "FunctionDeclaration" && node.declaration.id?.name === "activate")?.declaration;
+  const parameter = activation?.params?.[0];
+  if (parameter?.type !== "Identifier" || parameter.name !== "host") fail("frontend activate function must receive the host parameter directly");
+  return parameter;
 }
 
 function requestMethod(node) {
@@ -78,20 +123,22 @@ function aliasesHost(node) {
 function validatesHostRequestUse(node, parent) {
   if (aliasesHost(node)) fail("frontend cannot alias the host object");
   if (destructuresHostRequest(node)) fail("frontend cannot destructure host.request");
-  if (isRequestMember(node) && !isHostRequestMember(node)) fail("frontend request calls must use the host object directly");
+  if (usesComputedHostMember(node)) fail("frontend host members cannot use computed access");
+  if (isRequestMember(node) && isDirectCall(node, parent) && !isHostRequestMember(node)) fail("frontend request calls must use the host object directly");
   if (node.type !== "MemberExpression" || !isHostRequestMember(node)) return;
-  const directCall = parent?.type === "CallExpression" && unwrapChain(parent.callee) === node;
-  if (!directCall) fail("frontend must call host.request directly with a literal method name");
+  if (!isDirectCall(node, parent)) fail("frontend must call host.request directly with a literal method name");
 }
 
 export function frontendRequestMethods(source) {
   const methods = new Set();
   const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+  const activationParameter = activationHostParameter(program);
   visitAst(program, (node, parent) => {
     if (node.type === "ImportDeclaration" || node.type === "ImportExpression"
       || ((node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") && node.source !== null)) {
       fail("frontend must be a single ESM file without module dependencies");
     }
+    validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
     if (node.type === "CallExpression") {
       const method = requestMethod(node);
