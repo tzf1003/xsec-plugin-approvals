@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xsec.dev/schemas/plugin/com.xsec.desktop/1.json",
+  "title": "XSEC Desktop Plugin Extension v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "displayName", "publisher", "engines"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*" },
+    "publisher": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*" },
+    "icon": { "type": "string", "minLength": 1 },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["xsec", "pluginApi"],
+      "properties": {
+        "xsec": { "$ref": "#/$defs/semverRange" },
+        "pluginApi": { "$ref": "#/$defs/semverRange" }
+      }
+    },
+    "entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frontend": { "$ref": "#/$defs/pluginPath" },
+        "sidecar": { "$ref": "#/$defs/pluginPath" },
+        "worker": { "$ref": "#/$defs/pluginPath" }
+      }
+    },
+    "activationEvents": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(onStartup|onWorkspaceOpen|on(Command|Route|WorkspaceTool|AgentTool|SettingsPage):[a-z0-9][a-z0-9._-]*)$"
+      }
+    },
+    "permissions": { "$ref": "#/$defs/permissionRecord" },
+    "frontendApi": { "$ref": "#/$defs/frontendApiV2" },
+    "dependencies": { "$ref": "#/$defs/dependencies" },
+    "contributes": { "$ref": "#/$defs/contributions" }
+  },
+  "allOf": [{
+    "if": { "required": ["frontendApi"] },
+    "then": {
+      "required": ["entrypoints"],
+      "properties": {
+        "entrypoints": { "required": ["frontend"] }
+      }
+    }
+  }],
+  "$defs": {
+    "pluginPath": {
+      "type": "string",
+      "pattern": "^\\./(?=[\\x20-\\x7e]+$)(?!\\.\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "semverRange": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [{
+        "not": {
+          "pattern": "(?:^|,)\\s*(?:\\^|~|>=|>|<=|<|=)?\\s*(?:(?:0|[1-9]\\d*)\\.){0,2}(?!(?:(?:0|[1-9]\\d{0,18}|1[0-7]\\d{18}|18[0-3]\\d{17}|184[0-3]\\d{16}|1844[0-5]\\d{15}|18446[0-6]\\d{14}|184467[0-3]\\d{13}|1844674[0-3]\\d{12}|184467440[0-6]\\d{10}|1844674407[0-2]\\d{9}|18446744073[0-6]\\d{8}|1844674407370[0-8]\\d{6}|18446744073709[0-4]\\d{5}|184467440737095[0-4]\\d{4}|18446744073709550\\d{3}|18446744073709551[0-5]\\d{2}|1844674407370955160\\d|1844674407370955161[0-4]|18446744073709551615))(?!\\d))[1-9]\\d{19,}(?=\\.|[-+,\\s]|$)"
+        }
+      }],
+      "pattern": "^\\s*(?:\\*|(?:\\^|~|>=|>|<=|<|=)?\\s*(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)\\s*(?:,\\s*(?:\\*|(?:\\^|~|>=|>|<=|<|=)?\\s*(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)\\s*)*$"
+    },
+    "contributionId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "permission": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string" },
+        "optional": { "type": "boolean" }
+      }
+    },
+    "permissionRecord": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?:workspace\\.project\\.read|workspace\\.project\\.write|workspace\\.session\\.read|workspace\\.session\\.write|workspace\\.composer\\.write|workspace\\.tool\\.open|pluginData\\.read|pluginData\\.write|filesystem\\.workspace\\.read|filesystem\\.workspace\\.write|network\\.request|process\\.spawn|terminal\\.shell|browser\\.control|clipboard\\.read|clipboard\\.write|notifications\\.show|secrets\\.own\\.read|secrets\\.own\\.write|agent\\.tools\\.register|mcp\\.servers\\.register|native\\.execute)(?::(?=[\\s\\S]*\\S)[\\s\\S]*)?$"
+      },
+      "additionalProperties": { "$ref": "#/$defs/permission" }
+    },
+    "frontendRpcMethod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "binding"],
+      "properties": {
+        "capability": {
+          "enum": ["workspace.project.read", "workspace.project.write", "workspace.session.read", "workspace.session.write", "workspace.composer.write", "workspace.tool.open", "pluginData.read", "pluginData.write", "filesystem.workspace.read", "filesystem.workspace.write", "network.request", "process.spawn", "terminal.shell", "browser.control", "clipboard.read", "clipboard.write", "notifications.show", "secrets.own.read", "secrets.own.write", "agent.tools.register", "mcp.servers.register", "native.execute"]
+        },
+        "binding": { "enum": ["session", "context", "plugin"] }
+      }
+    },
+    "frontendApiV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "module", "methods"],
+      "properties": {
+        "version": { "const": 2 },
+        "module": { "const": "single-esm" },
+        "methods": {
+          "type": "object",
+          "propertyNames": { "pattern": "^xsec\\.[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)*$" },
+          "additionalProperties": { "$ref": "#/$defs/frontendRpcMethod" }
+        }
+      }
+    },
+    "ownedDependencyRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/nonEmptyString" },
+      "additionalProperties": { "$ref": "#/$defs/semverRange" }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": { "$ref": "#/$defs/ownedDependencyRecord" },
+        "optional": { "$ref": "#/$defs/ownedDependencyRecord" },
+        "services": { "$ref": "#/$defs/ownedDependencyRecord" }
+      }
+    },
+    "navigationItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "title", "icon", "route"],
+      "properties": {
+        "location": { "enum": ["primary", "project", "settings"] },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "icon": { "$ref": "#/$defs/nonEmptyString" },
+        "route": { "$ref": "#/$defs/nonEmptyString" },
+        "group": { "$ref": "#/$defs/nonEmptyString" },
+        "parent": { "$ref": "#/$defs/contributionId" },
+        "order": { "type": "number" },
+        "shortcut": { "$ref": "#/$defs/nonEmptyString" },
+        "when": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "page"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "page": { "$ref": "#/$defs/nonEmptyString" },
+        "deepLink": { "type": "boolean" },
+        "when": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "workspaceTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "icon", "scope", "launchable", "policy", "surface", "retain", "surfaces"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "icon": { "$ref": "#/$defs/nonEmptyString" },
+        "scope": { "enum": ["session", "assignment", "project", "entity"] },
+        "launchable": { "type": "boolean" },
+        "policy": { "enum": ["singleton", "multi", "entity-singleton"] },
+        "surface": { "enum": ["standard", "edge-to-edge", "terminal"] },
+        "retain": { "enum": ["active", "while-visible", "always"] },
+        "preferredSideWidth": { "type": "number", "exclusiveMinimum": 0 },
+        "preferredBottomHeight": { "type": "number", "exclusiveMinimum": 0 },
+        "defaultDock": { "enum": ["side", "bottom"] },
+        "defaultObserve": { "type": "boolean" },
+        "hostClassName": { "$ref": "#/$defs/nonEmptyString" },
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["interactive-dock", "batch-observe"] }
+        },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/nonEmptyString" } },
+        "when": { "$ref": "#/$defs/nonEmptyString" }
+      },
+      "allOf": [{
+        "if": {
+          "properties": { "defaultObserve": { "const": true } },
+          "required": ["defaultObserve"]
+        },
+        "then": {
+          "properties": {
+            "surfaces": { "contains": { "const": "batch-observe" } }
+          }
+        }
+      }]
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "category": { "$ref": "#/$defs/nonEmptyString" },
+        "enablement": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "settingsPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "group", "page"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "group": { "$ref": "#/$defs/nonEmptyString" },
+        "page": { "$ref": "#/$defs/nonEmptyString" },
+        "icon": { "$ref": "#/$defs/nonEmptyString" },
+        "order": { "type": "number" },
+        "when": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "agentTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "workspaceToolId": { "$ref": "#/$defs/contributionId" },
+        "core": { "type": "boolean" },
+        "inputSchema": { "type": "object", "additionalProperties": true },
+        "service": { "$ref": "#/$defs/nonEmptyString" },
+        "when": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "backgroundService": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint", "activation"],
+      "properties": {
+        "entrypoint": { "$ref": "#/$defs/pluginPath" },
+        "activation": { "$ref": "#/$defs/nonEmptyString" },
+        "healthTimeoutMs": { "type": "integer", "exclusiveMinimum": 0, "maximum": 120000 }
+      }
+    },
+    "navigationItemRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/navigationItem" }
+    },
+    "routeRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/route" }
+    },
+    "workspaceToolRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/workspaceTool" }
+    },
+    "commandRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/command" }
+    },
+    "settingsPageRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/settingsPage" }
+    },
+    "agentToolRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/agentTool" }
+    },
+    "backgroundServiceRecord": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/contributionId" },
+      "additionalProperties": { "$ref": "#/$defs/backgroundService" }
+    },
+    "contributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "navigation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "items": { "$ref": "#/$defs/navigationItemRecord" } }
+        },
+        "routes": { "$ref": "#/$defs/routeRecord" },
+        "workspaceTools": { "$ref": "#/$defs/workspaceToolRecord" },
+        "commands": { "$ref": "#/$defs/commandRecord" },
+        "settingsPages": { "$ref": "#/$defs/settingsPageRecord" },
+        "agentTools": { "$ref": "#/$defs/agentToolRecord" },
+        "backgroundServices": { "$ref": "#/$defs/backgroundServiceRecord" }
+      }
+    }
+  }
+}
