@@ -78,31 +78,23 @@ function validateDesktopSchema(extension, schema) {
   fail(`XSEC Desktop extension violates the pinned Desktop schema: ${details}`);
 }
 
-function rangeIncludes(range, version) {
-  return semver.satisfies(version, range, { includePrerelease: false });
-}
-
-function rangeHasMinimum(range, version) {
-  return range.split(",").some((part) => {
-    const match = /^\s*(\^|~|>=|>|=)?\s*([^\s]+)\s*$/.exec(part);
-    return match !== null && ["^", "~", ">=", ">", "="].includes(match[1] ?? "=")
-      && semver.gte(match[2], version);
-  });
+function rangeMeetsMinimum(range, version) {
+  const minimum = semver.minVersion(range);
+  return minimum !== null && semver.gte(minimum, version) && semver.intersects(range, `>=${version} <2.0.0`);
 }
 
 function validateFrontendApi(extension) {
   const api = extension.frontendApi;
   if (!api) return;
   const range = extension.engines.pluginApi;
-  const supports = (version) => rangeIncludes(range, version);
   if (!extension.entrypoints?.frontend) fail("frontendApi requires a frontend entrypoint");
-  if (!["1.1.0", "1.2.0", "1.3.0", "1.4.0"].some(supports) || supports("1.0.0")) fail("frontendApi v2 requires the supported Desktop Plugin API range");
+  if (!rangeMeetsMinimum(range, "1.1.0")) fail("frontendApi v2 requires Plugin API 1.1+");
   const methods = Object.entries(api.methods);
   if (methods.some(([, method]) => method.binding === "context" || method.binding === "plugin")
-    && (!["1.2.0", "1.3.0", "1.4.0"].some(supports) || supports("1.1.0"))) fail("frontendApi context/plugin binding requires Plugin API 1.2+");
-  if ("xsec.workspace.tool.open" in api.methods && !rangeHasMinimum(range, "1.3.0")) fail("workspace.tool.open requires Plugin API 1.3+");
+    && !rangeMeetsMinimum(range, "1.2.0")) fail("frontendApi context/plugin binding requires Plugin API 1.2+");
+  if (methods.some(([, method]) => method.capability === "workspace.tool.open") && !rangeMeetsMinimum(range, "1.3.0")) fail("workspace.tool.open requires Plugin API 1.3+");
   if (methods.some(([, method]) => method.capability === "workspace.composer.write")
-    && (!supports("1.4.0") || !rangeHasMinimum(range, "1.4.0"))) fail("workspace.composer.write requires Plugin API 1.4+");
+    && !rangeMeetsMinimum(range, "1.4.0")) fail("workspace.composer.write requires Plugin API 1.4+");
   const declared = new Set(Object.keys(extension.permissions ?? {}).map((permission) => permission.split(":", 1)[0]));
   for (const [method, declaration] of methods) if (!declared.has(declaration.capability)) fail(`frontend RPC ${method} uses an undeclared capability`);
 }
@@ -130,17 +122,26 @@ function isContained(pathApi, candidate) {
   return pathRelative !== ".." && !pathRelative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(pathRelative);
 }
 
+function declaredEntrypoints(extension) {
+  const entrypoints = Object.entries(extension.entrypoints ?? {});
+  const services = Object.entries(extension.contributes?.backgroundServices ?? {})
+    .map(([id, service]) => [`background service ${id}`, service.entrypoint]);
+  return [...entrypoints, ...services];
+}
+
+async function validateEntrypoint(kind, entrypoint) {
+  validatePortablePath(entrypoint);
+  if (!isContained(posix, entrypoint) || !isContained(win32, entrypoint)) fail(`${kind} entrypoint leaves the plugin root`);
+  const resolved = resolve(PLUGIN_ROOT, entrypoint);
+  const details = await lstat(resolved);
+  if (!details.isFile() || details.isSymbolicLink()) fail(`${kind} entrypoint must be a regular file`);
+  const pathRelative = relative(await realpath(PLUGIN_ROOT), await realpath(resolved));
+  if (pathRelative === ".." || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) fail(`${kind} entrypoint resolves outside the plugin root`);
+  if (kind === "frontend") await syntaxCheck(resolved);
+}
+
 async function validateEntrypoints(extension) {
-  for (const [kind, entrypoint] of Object.entries(extension.entrypoints ?? {})) {
-    validatePortablePath(entrypoint);
-    if (!isContained(posix, entrypoint) || !isContained(win32, entrypoint)) fail(`${kind} entrypoint leaves the plugin root`);
-    const resolved = resolve(PLUGIN_ROOT, entrypoint);
-    const details = await lstat(resolved);
-    if (!details.isFile() || details.isSymbolicLink()) fail(`${kind} entrypoint must be a regular file`);
-    const pathRelative = relative(await realpath(PLUGIN_ROOT), await realpath(resolved));
-    if (pathRelative === ".." || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) fail(`${kind} entrypoint resolves outside the plugin root`);
-    if (kind === "frontend") await syntaxCheck(resolved);
-  }
+  for (const [kind, entrypoint] of declaredEntrypoints(extension)) await validateEntrypoint(kind, entrypoint);
 }
 
 async function syntaxCheck(path) {
@@ -151,6 +152,23 @@ async function syntaxCheck(path) {
     child.once("error", rejectCheck);
     child.once("exit", (code) => code === 0 ? resolveCheck() : rejectCheck(new Error(`frontend syntax check failed with exit code ${code}`)));
   });
+}
+
+function frontendRequestMethods(source) {
+  const calls = source.match(/\bhost\.request\(/g) ?? [];
+  const methods = [...source.matchAll(/\bhost\.request\(\s*["'](xsec\.[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)["']/g)]
+    .map((match) => match[1]);
+  if (calls.length !== methods.length) fail("frontend host.request calls must use literal XSEC RPC method names");
+  return new Set(methods);
+}
+
+async function validateFrontendRequests(extension) {
+  if (!extension.frontendApi) return;
+  const source = await readFile(resolve(PLUGIN_ROOT, extension.entrypoints.frontend), "utf8");
+  const used = frontendRequestMethods(source);
+  const declared = new Set(Object.keys(extension.frontendApi.methods));
+  for (const method of used) if (!declared.has(method)) fail(`frontend RPC ${method} is not declared in plugin.json`);
+  for (const method of declared) if (!used.has(method)) fail(`plugin.json declares unused frontend RPC ${method}`);
 }
 
 function validateArchiveComponent(component, archivePath) {
@@ -207,6 +225,7 @@ async function main() {
   validateDesktopSchema(extension, schema);
   validateFrontendApi(extension);
   await validateEntrypoints(extension);
+  await validateFrontendRequests(extension);
   await validatePortableTree();
   validateMarketplaceMetadata(requireRecord(metadata, "marketplace metadata"), rootManifest, extension);
   console.log(`validated ${rootManifest.name}@${rootManifest.version}`);
