@@ -34,6 +34,7 @@ function isHost(node) {
 function isHostReference(node, parent) {
   if (!isHost(node)) return false;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  if (["MethodDefinition", "PropertyDefinition", "FieldDefinition"].includes(parent?.type) && parent.key === node && !parent.computed) return false;
   return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
 }
 
