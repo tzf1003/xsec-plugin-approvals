@@ -144,14 +144,19 @@ function detailValue(label, value, code = false) {
 function policyValue(value) {
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.join("、") : value; } catch { return value; }
 }
-function renderDetail(row) {
-  const [label, tone] = decisionInfo(row); const details = element("dl", "approval-details");
+function detailContent(row) {
+  const [label, tone] = decisionInfo(row);
   const items = [["请求 ID", row.request_id, true], ["工具", row.tool_name], ["最终决策", label], ["自动审批决定", row.gateway_decision ? (DECISIONS[row.gateway_decision]?.[0] || row.gateway_decision) : undefined], ["决定来源", row.resolution_source], ["风险等级", row.risk_level ? (RISKS[row.risk_level] || row.risk_level) : undefined], ["审批模式", MODES[row.mode] || row.mode], ["命令", row.command_preview, true], ["工作目录", row.cwd, true], ["参数", row.arguments_preview, true], ["自动审批原因", row.gateway_reason || row.reason], ["自动审批指引", row.gateway_guidance || row.agent_guidance], ["人工最终原因", row.final_reason], ["模型失败码", row.llm_failure_code], ["命中策略", row.policy_codes_json ? policyValue(row.policy_codes_json) : undefined], ["审批模型", row.model_name], ["置信度", row.model_confidence == null ? undefined : `${(Number(row.model_confidence) * 100).toFixed(1)}%`], ["耗时", row.model_latency_ms == null ? undefined : `${row.model_latency_ms} ms`], ["执行状态", row.execution_status], ["执行错误", row.execution_error], ["审批时间", row.approval_started_at == null ? undefined : formatTime(row.approval_started_at)]];
+  return { label, tone, items: items.filter(([, value]) => value !== undefined && value !== null && value !== "") };
+}
+function renderDetail(row) {
+  const { label, tone, items } = detailContent(row); const details = element("dl", "approval-details");
   for (const [title, value, code] of items) if (value !== undefined && value !== null && value !== "") details.append(detailValue(title, value, code));
   const decision = element("span", `approval-badge ${tone}`, label); return { decision, details };
 }
 function detailFingerprint(row) {
-  return JSON.stringify([row.request_id, row.tool_name, row.final_decision, row.decision, row.gateway_decision, row.resolution_source, row.risk_level, row.mode, row.command_preview, row.cwd, row.arguments_preview, row.gateway_reason, row.reason, row.gateway_guidance, row.agent_guidance, row.final_reason, row.llm_failure_code, row.policy_codes_json, row.model_name, row.model_confidence, row.model_latency_ms, row.execution_status, row.execution_error, row.approval_started_at]);
+  const { label, tone, items } = detailContent(row);
+  return JSON.stringify([label, tone, ...items.map(([title, value, code]) => [title, text(value), Boolean(code)])]);
 }
 
 export function activate(host) {
