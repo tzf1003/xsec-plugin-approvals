@@ -134,7 +134,7 @@ function settingsPage(host) {
     page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
     root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); console.info("approvals.settings.mount"); void load();
   }
-  return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() { console.debug("approvals.settings.update"); void load(); }, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
+  return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() {}, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
 }
 
 function detailValue(label, value, code = false) {
