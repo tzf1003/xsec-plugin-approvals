@@ -43,7 +43,7 @@ jobs:
           const realRoot = fs.realpathSync(root);
           const realEntrypoint = fs.realpathSync(resolved);
           const realRelative = path.relative(realRoot, realEntrypoint);
-          if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) throw new Error("frontend entrypoint must resolve inside the plugin");
+          if (realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) throw new Error("frontend entrypoint must resolve inside the plugin");
           process.stdout.write(realEntrypoint);
           NODE
           )"
