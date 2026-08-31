@@ -1,0 +1,13 @@
+{
+  "name": "xsec-plugin-approvals-source-validation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-plugin.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "acorn": "8.18.0",
+    "semver": "7.6.3"
+  }
+}
