@@ -14,37 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate the dual manifests and frontend entrypoint
-        run: |
-          entrypoint="$(node <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const pluginId = "com.xsec.workspace.approvals";
-          const root = `plugins/${pluginId}`;
-          const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-          const manifest = read(`${root}/plugin.json`);
-          const metadata = read(`${root}/.codex-plugin/plugin.json`);
-          const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
-          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-          if (!isNonEmptyString(manifest.name) || !isNonEmptyString(metadata.name)) throw new Error("plugin manifest names must be non-empty strings");
-          if (!isNonEmptyString(manifest.version) || !isNonEmptyString(metadata.version)) throw new Error("plugin manifest versions must be non-empty strings");
-          if (!semver.test(manifest.version) || !semver.test(metadata.version)) throw new Error("plugin manifest versions must be valid SemVer");
-          if (manifest.name !== pluginId || metadata.name !== pluginId) throw new Error("plugin manifest names must match the package identity");
-          if (manifest.version !== metadata.version) throw new Error("plugin manifest versions must match");
-          const entrypoint = manifest.extensions?.["com.xsec.desktop"]?.entrypoints?.frontend;
-          if (!isNonEmptyString(entrypoint)) throw new Error("frontend entrypoint is required");
-          const isContained = (pathApi) => {
-            const base = pathApi.resolve(root); const target = pathApi.resolve(root, entrypoint); const relative = pathApi.relative(base, target);
-            return !pathApi.isAbsolute(entrypoint) && relative !== ".." && !relative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative);
-          };
-          if (path.win32.parse(entrypoint).root || !isContained(path.posix) || !isContained(path.win32)) throw new Error("frontend entrypoint must remain inside the plugin on supported platforms");
-          const resolved = path.resolve(root, entrypoint);
-          if (!fs.lstatSync(resolved).isFile()) throw new Error("frontend entrypoint must be a regular file");
-          const realRoot = fs.realpathSync(root);
-          const realEntrypoint = fs.realpathSync(resolved);
-          const realRelative = path.relative(realRoot, realEntrypoint);
-          if (realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) throw new Error("frontend entrypoint must resolve inside the plugin");
-          process.stdout.write(realEntrypoint);
-          NODE
-          )"
-          node --check "$entrypoint"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate the Desktop plugin and marketplace manifests
+        run: npm run validate
