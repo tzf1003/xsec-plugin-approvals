@@ -102,7 +102,7 @@ function detailFingerprint(row) {
 
 export function activate(host) {
   function settingsPage() {
-    let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let saveInFlight = false; let reloadQueued = false; let disposed = false; let lifecycleRevision = 0;
+    let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let activeSave; let disposed = false; let lifecycleRevision = 0;
     const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
     async function readSettings() {
       try { return await host.request("xsec.approvals.settings.get", {}); }
@@ -133,19 +133,19 @@ export function activate(host) {
       if (!timeoutText || !Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS) return notice("模型超时必须是不小于 1000 毫秒的安全整数。", true);
       if (fullAccess && (!acknowledged || !controls.acknowledge.checked)) return notice("启用完全访问前，请确认风险声明并输入确认语句。", true);
       controls.save.disabled = true; controls.retry.disabled = true;
-      const revision = ++loadRevision; const lifecycle = lifecycleRevision; saveInFlight = true; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
+      const saveState = { lifecycle: lifecycleRevision, reloadQueued: false, revision: ++loadRevision }; activeSave = saveState; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
       try {
         const settings = await writeSettings({ autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
-        if (revision !== loadRevision) return;
+        if (activeSave !== saveState || saveState.revision !== loadRevision) return;
         applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true;
         const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
         notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
-      } catch (error) { if (revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
-        saveInFlight = false;
-        const shouldReload = reloadQueued && !disposed && lifecycle === lifecycleRevision;
-        reloadQueued = false;
+      } catch (error) { if (activeSave === saveState && saveState.revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
+        if (activeSave !== saveState) return;
+        activeSave = undefined;
+        const shouldReload = saveState.reloadQueued && !disposed && saveState.lifecycle === lifecycleRevision;
         if (shouldReload) void load();
-        else if (!disposed && lifecycle === lifecycleRevision && revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; }
+        else if (!disposed && saveState.lifecycle === lifecycleRevision && saveState.revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; }
       }
     }
     function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
@@ -166,7 +166,7 @@ export function activate(host) {
       page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
       root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); console.info("approvals.settings.mount"); void load();
     }
-    return { mount(nextRoot, nextContext) { themeSubscription?.dispose(); disposed = false; lifecycleRevision += 1; root = nextRoot; contextKey = settingsContextKey(nextContext); build(); applyTheme({}); themeSubscription = host.onTheme((theme) => applyTheme(theme)); }, update(nextContext) { const nextContextKey = settingsContextKey(nextContext); if (nextContextKey === contextKey) return; contextKey = nextContextKey; if (saveInFlight) { reloadQueued = true; return; } return load(); }, dispose() { console.debug("approvals.settings.dispose"); disposed = true; lifecycleRevision += 1; reloadQueued = false; themeSubscription?.dispose(); } };
+    return { mount(nextRoot, nextContext) { themeSubscription?.dispose(); disposed = false; lifecycleRevision += 1; root = nextRoot; contextKey = settingsContextKey(nextContext); build(); applyTheme({}); themeSubscription = host.onTheme((theme) => applyTheme(theme)); }, update(nextContext) { const nextContextKey = settingsContextKey(nextContext); if (nextContextKey === contextKey) return; contextKey = nextContextKey; if (activeSave?.lifecycle === lifecycleRevision) { activeSave.reloadQueued = true; return; } return load(); }, dispose() { console.debug("approvals.settings.dispose"); disposed = true; lifecycleRevision += 1; if (activeSave) activeSave.reloadQueued = false; themeSubscription?.dispose(); } };
   }
   console.debug("approvals.activate", { surface: host.context?.kind === "settings-page" ? "settings" : "workspace" });
   if (host.context?.kind === "settings-page") return settingsPage();

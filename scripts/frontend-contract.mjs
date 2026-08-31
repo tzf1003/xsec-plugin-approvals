@@ -31,6 +31,12 @@ function isHost(node) {
   return unwrapChain(node)?.type === "Identifier" && unwrapChain(node).name === "host";
 }
 
+function isHostReference(node, parent) {
+  if (!isHost(node)) return false;
+  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
+}
+
 function isHostRequestMember(node) {
   return node?.type === "MemberExpression" && isHost(node.object) && memberName(node) === "request";
 }
@@ -67,7 +73,7 @@ function validatesHostBinding(node, parent, activationParameter) {
   if (node === activationParameter) return;
   if (declarationBindsHost(node, activationParameter)) fail("frontend cannot shadow the activation host parameter");
   if (node.type === "AssignmentExpression" && patternBindsHost(node.left)) fail("frontend cannot reassign the activation host parameter");
-  if (isHost(node) && !(parent?.type === "MemberExpression" && parent.object === node)) fail("frontend host parameter can only be used as a direct member receiver");
+  if (isHostReference(node, parent) && !(parent?.type === "MemberExpression" && parent.object === node)) fail("frontend host parameter can only be used as a direct member receiver");
 }
 
 function activationHostParameter(program) {
