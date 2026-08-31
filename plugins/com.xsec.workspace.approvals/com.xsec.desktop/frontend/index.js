@@ -9,6 +9,10 @@ const WINDOW_MS = { "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 }
 const MIN_CONFIDENCE = 0;
 const MAX_CONFIDENCE = 1;
 const MIN_TIMEOUT_MS = 1_000;
+const MAX_TIMEOUT_MS = 120_000;
+const AUTO_REFRESH_INTERVAL_MS = 15_000;
+const FILTER_DEBOUNCE_MS = 250;
+const FULL_ACCESS_CONFIRMATION = "我确认启用完全访问权限";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -20,6 +24,7 @@ function element(tag, className, text) {
 function isRecord(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function text(value) { return value === undefined || value === null || value === "" ? "—" : String(value); }
 function errorText(error) { return error instanceof Error ? error.message : String(error); }
+function logFailure(event) { console.error(event); }
 function sessionIdFrom(context) {
   const id = context?.workspace?.session?.session_id || context?.workspace?.binding?.sessionId;
   return typeof id === "string" && id.trim() ? id : undefined;
@@ -37,6 +42,40 @@ function applyTheme(theme) {
   document.documentElement.dataset.xsecTheme = mode === "light" ? "light" : "dark";
 }
 function trackTheme(host) { applyTheme({}); return host.onTheme((theme) => applyTheme(theme)); }
+function validSettings(settings) {
+  const threshold = Number(settings?.low_confidence_threshold); const timeout = Number(settings?.llm?.timeout_ms);
+  return isRecord(settings) && isRecord(settings.llm)
+    && typeof settings.auto_enabled === "boolean" && typeof settings.full_access === "boolean" && typeof settings.allow_local_readonly === "boolean"
+    && typeof settings.llm.use_default_model === "boolean" && typeof settings.llm.model === "string"
+    && Number.isFinite(threshold) && threshold >= MIN_CONFIDENCE && threshold <= MAX_CONFIDENCE
+    && Number.isInteger(timeout) && timeout >= MIN_TIMEOUT_MS && timeout <= MAX_TIMEOUT_MS;
+}
+function applySettings(controls, settings) {
+  if (!validSettings(settings)) throw new Error("审批设置响应无效");
+  controls.auto.checked = settings.auto_enabled; controls.full.checked = settings.full_access; controls.risk.hidden = !settings.full_access;
+  controls.acknowledge.checked = false; controls.confirm.value = ""; controls.readonly.checked = settings.allow_local_readonly;
+  controls.threshold.value = String(settings.low_confidence_threshold); controls.model.value = settings.llm.use_default_model ? "" : settings.llm.model;
+  controls.timeout.value = String(settings.llm.timeout_ms);
+}
+async function readSettings(host) {
+  try { return await host.request("xsec.approvals.settings.get", {}); }
+  catch (error) { logFailure("approvals.settings.load.failed"); throw error; }
+}
+async function writeSettings(host, input) {
+  try { return await host.request("xsec.approvals.settings.set", input); }
+  catch (error) { logFailure("approvals.settings.save.failed"); throw error; }
+}
+function showResolvedModel(controls, settings) {
+  const value = settings?.resolved_model;
+  controls.modelStatus.textContent = value?.error ? `模型状态：${value.error}` : value?.model
+    ? `模型状态：${value.provider || "默认服务商"} / ${value.model}（${value.api_key_available ? "凭据可用" : "凭据不可用"}）`
+    : `模型状态：${settings?.api_key_configured ? "使用当前会话模型" : "尚未配置固定审批模型"}`;
+}
+function showSettingsOverview(controls, settings) {
+  const model = settings?.llm?.use_default_model ? "跟随当前会话模型" : (settings?.llm?.model || "未配置");
+  const values = [["新会话默认模式", settings?.auto_enabled ? "LLM 自动审批" : "人工审批"], ["完全访问授权", settings?.full_access ? "已授权，可显式选择" : "未授权"], ["审批模型策略", model]];
+  controls.summary.replaceChildren(); for (const [label, value] of values) controls.summary.append(detailValue(label, value));
+}
 
 function addStyles(root) {
   const style = element("style");
@@ -47,44 +86,34 @@ function addStyles(root) {
 function settingsPage(host) {
   let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0;
   const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
-  const resolved = (settings) => {
-    const value = settings?.resolved_model;
-    controls.modelStatus.textContent = value?.error ? `模型状态：${value.error}` : value?.model
-      ? `模型状态：${value.provider || "默认服务商"} / ${value.model}（${value.api_key_available ? "凭据可用" : "凭据不可用"}）`
-      : `模型状态：${settings?.api_key_configured ? "使用当前会话模型" : "尚未配置固定审批模型"}`;
-  };
-  const overview = (settings) => {
-    const model = settings?.llm?.use_default_model ? "跟随当前会话模型" : (settings?.llm?.model || "未配置");
-    const values = [["新会话默认模式", settings?.auto_enabled ? "LLM 自动审批" : "人工审批"], ["完全访问授权", settings?.full_access ? "已授权，可显式选择" : "未授权"], ["审批模型策略", model]];
-    controls.summary.replaceChildren(); for (const [label, value] of values) controls.summary.append(detailValue(label, value));
-  };
   async function load() {
     const revision = ++loadRevision;
     ready = false; controls.save.disabled = true; controls.retry.disabled = true; notice("正在读取审批设置…");
+    console.info("approvals.settings.load.started");
     try {
-      const settings = await host.request("xsec.approvals.settings.get", {});
+      const settings = await readSettings(host);
       if (revision !== loadRevision) return;
-      const thresholdValue = Number(settings?.low_confidence_threshold); const timeoutValue = Number(settings?.llm?.timeout_ms);
-      if (!isRecord(settings) || !isRecord(settings.llm) || !Number.isFinite(thresholdValue) || thresholdValue < MIN_CONFIDENCE || thresholdValue > MAX_CONFIDENCE || timeoutValue < MIN_TIMEOUT_MS) throw new Error("审批设置响应无效");
-      controls.auto.checked = Boolean(settings.auto_enabled); controls.full.checked = Boolean(settings.full_access); controls.risk.hidden = !controls.full.checked; controls.acknowledge.checked = false; controls.confirm.value = "";
-      controls.readonly.checked = settings.allow_local_readonly !== false; controls.threshold.value = String(thresholdValue);
-      controls.model.value = settings.llm.use_default_model ? "" : (typeof settings.llm.model === "string" ? settings.llm.model : ""); controls.timeout.value = String(timeoutValue);
-      resolved(settings); overview(settings); ready = true; controls.save.disabled = false; notice("");
+      applySettings(controls, settings);
+      showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true; controls.save.disabled = false; notice("");
+      console.info("approvals.settings.load.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
     } catch (error) { if (revision === loadRevision) notice(`读取审批设置失败：${errorText(error)}`, true); } finally { if (revision === loadRevision) controls.retry.disabled = false; }
   }
   async function save() {
     if (!ready) return notice("请先成功读取当前审批设置后再保存。", true);
-    const fullAccess = controls.full.checked; const acknowledged = !fullAccess || controls.confirm.value === "我确认启用完全访问权限";
+    const fullAccess = controls.full.checked; const acknowledged = fullAccess && controls.confirm.value === FULL_ACCESS_CONFIRMATION;
     const thresholdText = controls.threshold.value.trim(); const threshold = Number(thresholdText);
     const timeoutText = controls.timeout.value.trim(); const timeoutMs = Number(timeoutText);
     if (!thresholdText || !Number.isFinite(threshold) || threshold < MIN_CONFIDENCE || threshold > MAX_CONFIDENCE) return notice("低置信度阈值必须是 0 到 1 之间的数字。", true);
-    if (!timeoutText || !Number.isFinite(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS) return notice("模型超时必须至少为 1000 毫秒。", true);
-    if (!acknowledged || !controls.acknowledge.checked) return notice("启用完全访问前，请确认风险声明并输入确认语句。", true);
+    if (!timeoutText || !Number.isInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS) return notice("模型超时必须是 1000 到 120000 毫秒之间的整数。", true);
+    if (fullAccess && (!acknowledged || !controls.acknowledge.checked)) return notice("启用完全访问前，请确认风险声明并输入确认语句。", true);
     controls.save.disabled = true; controls.retry.disabled = true;
+    const revision = ++loadRevision; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
     try {
-      await host.request("xsec.approvals.settings.set", { autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
+      const settings = await writeSettings(host, { autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
+      if (revision !== loadRevision) return;
+      applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true;
       const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
-      await load(); if (ready) notice(saved);
+      notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
     } catch (error) { notice(`保存审批设置失败：${errorText(error)}`, true); } finally { controls.save.disabled = !ready; controls.retry.disabled = false; }
   }
   function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
@@ -93,7 +122,7 @@ function settingsPage(host) {
     const auto = element("input"); auto.type = "checkbox"; const full = element("input"); full.type = "checkbox"; const readonly = element("input"); readonly.type = "checkbox"; const acknowledge = element("input"); acknowledge.type = "checkbox";
     const threshold = element("input", "approval-input"); threshold.type = "number"; threshold.min = "0"; threshold.max = "1"; threshold.step = "0.05";
     const model = element("input", "approval-input"); model.placeholder = "留空使用当前会话模型"; const timeout = element("input", "approval-input"); timeout.type = "number"; timeout.min = "1000"; timeout.step = "1000";
-    const confirm = element("input", "approval-input"); confirm.placeholder = "启用完全访问时输入：我确认启用完全访问权限";
+    const confirm = element("input", "approval-input"); confirm.placeholder = `启用完全访问时输入：${FULL_ACCESS_CONFIRMATION}`;
     const summaryCard = element("section", "approval-card"); const summary = element("dl", "approval-details"); summaryCard.append(element("h2", "approval-card-title", "审批策略"), summary);
     const saveButton = element("button", "approval-button", "保存设置"); const retryButton = element("button", "approval-button", "重新读取设置"); const status = element("p", "approval-model-status"); const note = element("p", "approval-status"); saveButton.disabled = true;
     const check = (input, label) => { const node = element("label", "check"); node.append(input, document.createTextNode(label)); return node; };
@@ -103,9 +132,9 @@ function settingsPage(host) {
     saveButton.onclick = () => void save(); retryButton.onclick = () => void load();
     full.onchange = updateRisk;
     page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
-    root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); void load();
+    root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); console.info("approvals.settings.mount"); void load();
   }
-  return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() { void load(); }, dispose() { themeSubscription?.dispose(); } };
+  return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() { console.debug("approvals.settings.update"); void load(); }, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
 }
 
 function detailValue(label, value, code = false) {
@@ -123,6 +152,7 @@ function renderDetail(row) {
 }
 
 export function activate(host) {
+  console.debug("approvals.activate", { surface: host.context?.kind === "settings-page" ? "settings" : "workspace" });
   if (host.context?.kind === "settings-page") return settingsPage(host);
   let root; let context = host.context; let controls; let themeSubscription; let timer; let debounce; let state = { session: undefined, revision: 0, rows: undefined, stats: undefined, autoRefresh: false, tool: "", decision: "", window: "all" };
   const status = (message, failed = false) => { controls.status.textContent = message; controls.status.dataset.tone = failed ? "error" : ""; };
@@ -155,15 +185,21 @@ export function activate(host) {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
       if (revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
-    } catch (error) { if (revision !== state.revision || state.session !== session) return; state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally { if (revision === state.revision) controls.refresh.disabled = false; }
+    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally { if (revision === state.revision) controls.refresh.disabled = false; }
   }
-  const later = () => { window.clearTimeout(debounce); debounce = window.setTimeout(() => void refresh(), 250); };
+  const later = () => {
+    window.clearTimeout(debounce);
+    debounce = window.setTimeout(() => {
+      console.info("approvals.workspace.tool-filter.applied", { hasValue: Boolean(state.tool) });
+      void refresh();
+    }, FILTER_DEBOUNCE_MS);
+  };
   function build() {
-    root.replaceChildren(); addStyles(root); const page = element("section", "xsec-approvals"); const summary = element("div", "approval-card approval-summary"); const card = element("section", "approval-card"); const head = element("header", "approval-card-head"); const refreshButton = element("button", "approval-button", "刷新"); refreshButton.type = "button"; refreshButton.onclick = () => void refresh(); head.append(element("h1", "approval-card-title", "本会话审批记录"), refreshButton);
+    root.replaceChildren(); addStyles(root); const page = element("section", "xsec-approvals"); const summary = element("div", "approval-card approval-summary"); const card = element("section", "approval-card"); const head = element("header", "approval-card-head"); const refreshButton = element("button", "approval-button", "刷新"); refreshButton.type = "button"; refreshButton.onclick = () => { console.info("approvals.workspace.refresh.requested"); void refresh(); }; head.append(element("h1", "approval-card-title", "本会话审批记录"), refreshButton);
     const toolbar = element("div", "approval-toolbar"); const windowGroup = element("span", "approval-toolbar"); const select = element("select", "approval-select"); const input = element("input", "approval-input"); input.placeholder = "工具名"; input.type = "search"; [["", "决策"], ...FILTER_DECISIONS.map((key) => [key, DECISIONS[key][0]])].forEach(([value, label]) => { const option = element("option", "", label); option.value = value; select.append(option); });
-    for (const [value, label] of WINDOWS) { const button = element("button", "approval-button approval-window", label); button.type = "button"; button.dataset.value = value; button.onclick = () => { if (state.window !== value) { state.window = value; invalidate(); updateWindows(); void refresh(); } }; windowGroup.append(button); }
-    select.onchange = () => { state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render();
+    for (const [value, label] of WINDOWS) { const button = element("button", "approval-button approval-window", label); button.type = "button"; button.dataset.value = value; button.onclick = () => { if (state.window !== value) { console.info("approvals.workspace.window.changed", { window: value }); state.window = value; invalidate(); updateWindows(); void refresh(); } }; windowGroup.append(button); }
+    select.onchange = () => { console.info("approvals.workspace.decision.changed", { decision: select.value || "all" }); state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render(); console.info("approvals.workspace.mount");
   }
   function updateWindows() { controls.windows.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === state.window))); }
-  return { mount(nextRoot, nextContext) { root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); timer = window.setInterval(() => { if (state.autoRefresh && document.visibilityState === "visible") void refresh(); }, 15_000); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) return refresh(); }, dispose() { invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
+  return { mount(nextRoot, nextContext) { root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); timer = window.setInterval(() => { if (state.autoRefresh && document.visibilityState === "visible") void refresh(); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
 }
