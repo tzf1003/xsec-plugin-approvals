@@ -183,7 +183,7 @@ export function activate(host) {
     if (!state.detailRequestId) return;
     const row = state.rows?.find((candidate) => candidate.request_id === state.detailRequestId);
     if (!row) return closeDetail();
-    if (state.detailFingerprint !== detailFingerprint(row)) showDetail(row);
+    if (state.detailFingerprint !== detailFingerprint(row) || controls.drawer.hidden) showDetail(row);
   };
   const showRows = () => {
     controls.list.replaceChildren(); const rows = state.rows;
@@ -208,7 +208,7 @@ export function activate(host) {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
       if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
-    } catch (error) { if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+    } catch (error) { if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; if (!silent) { logFailure("approvals.workspace.refresh.failed"); status(`加载本会话审批记录失败：${errorText(error)}`, true); } } finally {
       if (mountRevision !== state.mountRevision || state.disposed) return;
       state.refreshInFlight = false; const queued = state.refreshQueued; state.refreshQueued = false;
       if (queued) { void refresh(); return; }
