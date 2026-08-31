@@ -18,7 +18,12 @@ const MARKET_KEYS = new Set(["name", "version", "description", "author", "licens
 const INTERFACE_KEYS = new Set(["displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "websiteURL", "defaultPrompt", "brandColor"]);
 const NAME_PATTERN = /^(?=.{1,64}$)[a-z0-9](?!.*(?:--|\.\.))[a-z0-9.-]*[a-z0-9]$|^[a-z0-9]$/;
 const ENTRYPOINT_COMPONENTS = /^[\x20-\x7e]+$/;
-const REQUIRED_RPC_METHODS = new Set(["xsec.approvals.list", "xsec.approvals.statistics", "xsec.approvals.settings.get", "xsec.approvals.settings.set"]);
+const REQUIRED_RPC_METHODS = new Map([
+  ["xsec.approvals.list", { capability: "workspace.session.read", binding: "session" }],
+  ["xsec.approvals.statistics", { capability: "workspace.session.read", binding: "session" }],
+  ["xsec.approvals.settings.get", { capability: "pluginData.read", binding: "plugin" }],
+  ["xsec.approvals.settings.set", { capability: "pluginData.write", binding: "plugin" }],
+]);
 const REQUIRED_ACTIVATIONS = new Map([
   ["onWorkspaceTool:approvals", "workspaceTools"],
   ["onSettingsPage:approvals", "settingsPages"],
@@ -172,7 +177,12 @@ async function validateFrontendRequests(extension) {
   const source = await readFile(resolve(PLUGIN_ROOT, frontend), "utf8");
   const used = frontendRequestMethods(source);
   const declared = new Set(Object.keys(extension.frontendApi.methods));
-  for (const method of REQUIRED_RPC_METHODS) if (!declared.has(method)) fail(`approvals must declare frontend RPC ${method}`);
+  for (const [method, expected] of REQUIRED_RPC_METHODS) {
+    const declaration = extension.frontendApi.methods[method];
+    if (!declaration || declaration.capability !== expected.capability || declaration.binding !== expected.binding) {
+      fail(`approvals frontend RPC ${method} must retain its authorization descriptor`);
+    }
+  }
   for (const method of used) if (!declared.has(method)) fail(`frontend RPC ${method} is not declared in plugin.json`);
   for (const method of declared) if (!used.has(method)) fail(`plugin.json declares unused frontend RPC ${method}`);
 }

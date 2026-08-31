@@ -66,7 +66,13 @@ function destructuresHostRequest(node) {
   return false;
 }
 
+function aliasesHost(node) {
+  return (node.type === "VariableDeclarator" && isHost(node.init))
+    || (node.type === "AssignmentExpression" && isHost(node.right));
+}
+
 function validatesHostRequestUse(node, parent) {
+  if (aliasesHost(node)) fail("frontend cannot alias the host object");
   if (destructuresHostRequest(node)) fail("frontend cannot destructure host.request");
   if (node.type !== "MemberExpression" || !isHostRequestMember(node)) return;
   const directCall = parent?.type === "CallExpression" && unwrapChain(parent.callee) === node;
@@ -77,7 +83,10 @@ export function frontendRequestMethods(source) {
   const methods = new Set();
   const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
   visitAst(program, (node, parent) => {
-    if (node.type === "ImportDeclaration" || node.type === "ImportExpression") fail("frontend must be a single ESM file without imports");
+    if (node.type === "ImportDeclaration" || node.type === "ImportExpression"
+      || ((node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") && node.source !== null)) {
+      fail("frontend must be a single ESM file without module dependencies");
+    }
     validatesHostRequestUse(node, parent);
     if (node.type === "CallExpression") {
       const method = requestMethod(node);

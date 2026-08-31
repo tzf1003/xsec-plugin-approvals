@@ -76,6 +76,10 @@ function showSettingsOverview(controls, settings) {
   const values = [["新会话默认模式", settings?.auto_enabled ? "LLM 自动审批" : "人工审批"], ["完全访问授权", settings?.full_access ? "已授权，可显式选择" : "未授权"], ["审批模型策略", model]];
   controls.summary.replaceChildren(); for (const [label, value] of values) controls.summary.append(detailValue(label, value));
 }
+function settingsContextKey(context) {
+  const settings = isRecord(context?.settings) ? context.settings : {};
+  return JSON.stringify([context?.kind, settings.id, settings.page]);
+}
 
 function addStyles(root) {
   const style = element("style");
@@ -84,7 +88,7 @@ function addStyles(root) {
 }
 
 function settingsPage(host) {
-  let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0;
+  let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context);
   const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
   async function load() {
     const revision = ++loadRevision;
@@ -134,7 +138,7 @@ function settingsPage(host) {
     page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
     root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); console.info("approvals.settings.mount"); void load();
   }
-  return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() {}, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
+  return { mount(nextRoot, nextContext) { root = nextRoot; contextKey = settingsContextKey(nextContext); build(); themeSubscription = trackTheme(host); }, update(nextContext) { const nextContextKey = settingsContextKey(nextContext); if (nextContextKey === contextKey) return; contextKey = nextContextKey; return load(); }, dispose() { console.debug("approvals.settings.dispose"); themeSubscription?.dispose(); } };
 }
 
 function detailValue(label, value, code = false) {
