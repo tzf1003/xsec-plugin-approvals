@@ -53,6 +53,11 @@ function settingsPage(host) {
       ? `模型状态：${value.provider || "默认服务商"} / ${value.model}（${value.api_key_available ? "凭据可用" : "凭据不可用"}）`
       : `模型状态：${settings?.api_key_configured ? "使用当前会话模型" : "尚未配置固定审批模型"}`;
   };
+  const overview = (settings) => {
+    const model = settings?.llm?.use_default_model ? "跟随当前会话模型" : (settings?.llm?.model || "未配置");
+    const values = [["新会话默认模式", settings?.auto_enabled ? "LLM 自动审批" : "人工审批"], ["完全访问授权", settings?.full_access ? "已授权，可显式选择" : "未授权"], ["审批模型策略", model]];
+    controls.summary.replaceChildren(); for (const [label, value] of values) controls.summary.append(detailValue(label, value));
+  };
   async function load() {
     const revision = ++loadRevision;
     ready = false; controls.save.disabled = true; controls.retry.disabled = true; notice("正在读取审批设置…");
@@ -61,10 +66,10 @@ function settingsPage(host) {
       if (revision !== loadRevision) return;
       const thresholdValue = Number(settings?.low_confidence_threshold); const timeoutValue = Number(settings?.llm?.timeout_ms);
       if (!isRecord(settings) || !isRecord(settings.llm) || !Number.isFinite(thresholdValue) || thresholdValue < MIN_CONFIDENCE || thresholdValue > MAX_CONFIDENCE || timeoutValue < MIN_TIMEOUT_MS) throw new Error("审批设置响应无效");
-      controls.auto.checked = Boolean(settings.auto_enabled); controls.full.checked = Boolean(settings.full_access);
+      controls.auto.checked = Boolean(settings.auto_enabled); controls.full.checked = Boolean(settings.full_access); controls.risk.hidden = !controls.full.checked; controls.acknowledge.checked = false; controls.confirm.value = "";
       controls.readonly.checked = settings.allow_local_readonly !== false; controls.threshold.value = String(thresholdValue);
       controls.model.value = settings.llm.use_default_model ? "" : (typeof settings.llm.model === "string" ? settings.llm.model : ""); controls.timeout.value = String(timeoutValue);
-      resolved(settings); ready = true; controls.save.disabled = false; notice("");
+      resolved(settings); overview(settings); ready = true; controls.save.disabled = false; notice("");
     } catch (error) { if (revision === loadRevision) notice(`读取审批设置失败：${errorText(error)}`, true); } finally { if (revision === loadRevision) controls.retry.disabled = false; }
   }
   async function save() {
@@ -74,7 +79,7 @@ function settingsPage(host) {
     const timeoutText = controls.timeout.value.trim(); const timeoutMs = Number(timeoutText);
     if (!thresholdText || !Number.isFinite(threshold) || threshold < MIN_CONFIDENCE || threshold > MAX_CONFIDENCE) return notice("低置信度阈值必须是 0 到 1 之间的数字。", true);
     if (!timeoutText || !Number.isFinite(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS) return notice("模型超时必须至少为 1000 毫秒。", true);
-    if (!acknowledged) return notice("启用完全访问前，请输入确认语句。", true);
+    if (!acknowledged || !controls.acknowledge.checked) return notice("启用完全访问前，请确认风险声明并输入确认语句。", true);
     controls.save.disabled = true; controls.retry.disabled = true;
     try {
       await host.request("xsec.approvals.settings.set", { autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
@@ -85,15 +90,20 @@ function settingsPage(host) {
   function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
   function build() {
     root.replaceChildren(); addStyles(root); const page = element("main", "approval-settings");
-    const auto = element("input"); auto.type = "checkbox"; const full = element("input"); full.type = "checkbox"; const readonly = element("input"); readonly.type = "checkbox";
+    const auto = element("input"); auto.type = "checkbox"; const full = element("input"); full.type = "checkbox"; const readonly = element("input"); readonly.type = "checkbox"; const acknowledge = element("input"); acknowledge.type = "checkbox";
     const threshold = element("input", "approval-input"); threshold.type = "number"; threshold.min = "0"; threshold.max = "1"; threshold.step = "0.05";
     const model = element("input", "approval-input"); model.placeholder = "留空使用当前会话模型"; const timeout = element("input", "approval-input"); timeout.type = "number"; timeout.min = "1000"; timeout.step = "1000";
     const confirm = element("input", "approval-input"); confirm.placeholder = "启用完全访问时输入：我确认启用完全访问权限";
+    const summaryCard = element("section", "approval-card"); const summary = element("dl", "approval-details"); summaryCard.append(element("h2", "approval-card-title", "审批策略"), summary);
     const saveButton = element("button", "approval-button", "保存设置"); const retryButton = element("button", "approval-button", "重新读取设置"); const status = element("p", "approval-model-status"); const note = element("p", "approval-status"); saveButton.disabled = true;
     const check = (input, label) => { const node = element("label", "check"); node.append(input, document.createTextNode(label)); return node; };
+    const risk = element("section", "approval-card"); const riskTitle = element("strong", "", "完全访问确认"); const riskDetail = element("p", "", "启用后，普通会话、批量任务和资产发现可以显式选择完全访问。系统危险规则、工作区写入沙箱和审计仍然生效。请仅在目标与操作均已获得授权时继续。");
+    risk.append(riskTitle, riskDetail, check(acknowledge, "我已了解上述风险，并确认当前操作仅用于合法且已获得授权的目标。"), field("请输入确认语句", confirm)); risk.hidden = true;
+    const updateRisk = () => { risk.hidden = !full.checked; if (!full.checked) { acknowledge.checked = false; confirm.value = ""; } };
     saveButton.onclick = () => void save(); retryButton.onclick = () => void load();
-    page.append(element("h1", "", "审批记录"), element("p", "", "默认策略只适用于后续会话；当前会话的审批状态仍在任务界面管理。"), check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型", model), status, field("模型超时（毫秒）", timeout), field("完全访问确认", confirm), saveButton, retryButton, note);
-    root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; void load();
+    full.onchange = updateRisk;
+    page.append(element("h1", "", "审批记录"), element("p", "", "新会话默认策略影响后续创建的普通会话；完全访问是全局可选上限，当前会话的模式仍在任务界面管理。"), summaryCard, check(auto, "新会话默认使用 LLM 自动审批"), check(full, "允许选择完全访问（高风险）"), risk, check(readonly, "本地只读调用直接放行"), field("低置信度阈值", threshold), field("审批模型（留空跟随当前会话模型）", model), status, field("模型超时（毫秒）", timeout), saveButton, retryButton, note);
+    root.append(page); controls = { auto, full, readonly, threshold, model, timeout, confirm, acknowledge, risk, summary, save: saveButton, retry: retryButton, modelStatus: status, notice: note }; updateRisk(); void load();
   }
   return { mount(nextRoot) { root = nextRoot; build(); themeSubscription = trackTheme(host); }, update() { void load(); }, dispose() { themeSubscription?.dispose(); } };
 }
