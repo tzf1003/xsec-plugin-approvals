@@ -199,7 +199,7 @@ export function activate(host) {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
       if (revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
-    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
       state.refreshInFlight = false; const queued = state.refreshQueued; state.refreshQueued = false;
       if (state.disposed) return;
       if (queued) { void refresh(); return; }
