@@ -35,6 +35,10 @@ function isHostRequestMember(node) {
   return node?.type === "MemberExpression" && isHost(node.object) && memberName(node) === "request";
 }
 
+function isRequestMember(node) {
+  return node?.type === "MemberExpression" && memberName(node) === "request";
+}
+
 function requestMethod(node) {
   const callee = unwrapChain(node.callee);
   if (!isHostRequestMember(callee)) return undefined;
@@ -74,6 +78,7 @@ function aliasesHost(node) {
 function validatesHostRequestUse(node, parent) {
   if (aliasesHost(node)) fail("frontend cannot alias the host object");
   if (destructuresHostRequest(node)) fail("frontend cannot destructure host.request");
+  if (isRequestMember(node) && !isHostRequestMember(node)) fail("frontend request calls must use the host object directly");
   if (node.type !== "MemberExpression" || !isHostRequestMember(node)) return;
   const directCall = parent?.type === "CallExpression" && unwrapChain(parent.callee) === node;
   if (!directCall) fail("frontend must call host.request directly with a literal method name");
