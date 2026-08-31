@@ -23,15 +23,24 @@ jobs:
           const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
           const manifest = read(`${root}/plugin.json`);
           const metadata = read(`${root}/.codex-plugin/plugin.json`);
+          const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
+          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+          if (!isNonEmptyString(manifest.name) || !isNonEmptyString(metadata.name)) throw new Error("plugin manifest names must be non-empty strings");
+          if (!isNonEmptyString(manifest.version) || !isNonEmptyString(metadata.version)) throw new Error("plugin manifest versions must be non-empty strings");
+          if (!semver.test(manifest.version) || !semver.test(metadata.version)) throw new Error("plugin manifest versions must be valid SemVer");
           if (manifest.name !== metadata.name) throw new Error("plugin manifest names must match");
           if (manifest.version !== metadata.version) throw new Error("plugin manifest versions must match");
           const entrypoint = manifest.extensions?.["com.xsec.desktop"]?.entrypoints?.frontend;
-          if (typeof entrypoint !== "string" || !entrypoint) throw new Error("frontend entrypoint is required");
+          if (!isNonEmptyString(entrypoint)) throw new Error("frontend entrypoint is required");
           const resolved = path.resolve(root, entrypoint);
           const relative = path.relative(root, resolved);
           if (path.isAbsolute(entrypoint) || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("frontend entrypoint must remain inside the plugin");
-          if (!fs.statSync(resolved).isFile()) throw new Error("frontend entrypoint must be a file");
-          process.stdout.write(resolved);
+          if (!fs.lstatSync(resolved).isFile()) throw new Error("frontend entrypoint must be a regular file");
+          const realRoot = fs.realpathSync(root);
+          const realEntrypoint = fs.realpathSync(resolved);
+          const realRelative = path.relative(realRoot, realEntrypoint);
+          if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) throw new Error("frontend entrypoint must resolve inside the plugin");
+          process.stdout.write(realEntrypoint);
           NODE
           )"
           node --check "$entrypoint"
