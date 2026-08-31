@@ -14,7 +14,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Require the dual plugin manifests
+      - name: Validate the dual manifests and frontend entrypoint
         run: |
-          test -f plugins/com.xsec.workspace.approvals/plugin.json
-          test -f plugins/com.xsec.workspace.approvals/.codex-plugin/plugin.json
+          entrypoint="$(node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const root = "plugins/com.xsec.workspace.approvals";
+          const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const manifest = read(`${root}/plugin.json`);
+          const metadata = read(`${root}/.codex-plugin/plugin.json`);
+          if (manifest.name !== metadata.name) throw new Error("plugin manifest names must match");
+          if (manifest.version !== metadata.version) throw new Error("plugin manifest versions must match");
+          const entrypoint = manifest.extensions?.["com.xsec.desktop"]?.entrypoints?.frontend;
+          if (typeof entrypoint !== "string" || !entrypoint) throw new Error("frontend entrypoint is required");
+          const resolved = path.resolve(root, entrypoint);
+          const relative = path.relative(root, resolved);
+          if (path.isAbsolute(entrypoint) || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("frontend entrypoint must remain inside the plugin");
+          if (!fs.statSync(resolved).isFile()) throw new Error("frontend entrypoint must be a file");
+          process.stdout.write(resolved);
+          NODE
+          )"
+          node --check "$entrypoint"
