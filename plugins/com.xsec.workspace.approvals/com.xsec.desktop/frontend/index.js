@@ -42,13 +42,14 @@ function applyTheme(theme) {
   document.documentElement.dataset.xsecTheme = mode === "light" ? "light" : "dark";
 }
 function trackTheme(host) { applyTheme({}); return host.onTheme((theme) => applyTheme(theme)); }
+function isNumericSetting(value) { return typeof value === "number" && Number.isFinite(value); }
 function validSettings(settings) {
   const threshold = Number(settings?.low_confidence_threshold); const timeout = Number(settings?.llm?.timeout_ms);
   return isRecord(settings) && isRecord(settings.llm)
     && typeof settings.auto_enabled === "boolean" && typeof settings.full_access === "boolean" && typeof settings.allow_local_readonly === "boolean"
     && typeof settings.llm.use_default_model === "boolean" && typeof settings.llm.model === "string"
-    && Number.isFinite(threshold) && threshold >= MIN_CONFIDENCE && threshold <= MAX_CONFIDENCE
-    && Number.isInteger(timeout) && timeout >= MIN_TIMEOUT_MS && timeout <= MAX_TIMEOUT_MS;
+    && isNumericSetting(settings.low_confidence_threshold) && threshold >= MIN_CONFIDENCE && threshold <= MAX_CONFIDENCE
+    && isNumericSetting(settings.llm.timeout_ms) && Number.isInteger(timeout) && timeout >= MIN_TIMEOUT_MS && timeout <= MAX_TIMEOUT_MS;
 }
 function applySettings(controls, settings) {
   if (!validSettings(settings)) throw new Error("审批设置响应无效");
