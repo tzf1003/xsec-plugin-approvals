@@ -154,38 +154,52 @@ function renderDetail(row) {
 export function activate(host) {
   console.debug("approvals.activate", { surface: host.context?.kind === "settings-page" ? "settings" : "workspace" });
   if (host.context?.kind === "settings-page") return settingsPage(host);
-  let root; let context = host.context; let controls; let themeSubscription; let timer; let debounce; let state = { session: undefined, revision: 0, rows: undefined, stats: undefined, autoRefresh: false, tool: "", decision: "", window: "all" };
+  let root; let context = host.context; let controls; let themeSubscription; let timer; let debounce; let state = { session: undefined, revision: 0, rows: undefined, stats: undefined, autoRefresh: false, detailRequestId: undefined, refreshInFlight: false, refreshQueued: false, disposed: false, tool: "", decision: "", window: "all" };
   const status = (message, failed = false) => { controls.status.textContent = message; controls.status.dataset.tone = failed ? "error" : ""; };
   const invalidate = () => { state.revision += 1; };
   const showStats = () => {
     controls.summary.replaceChildren(); const stats = state.stats; const rate = stats ? `${(Number(stats.allow_rate) * 100).toFixed(1)}%` : "—";
     for (const [label, value] of [["总数", stats ? stats.approval_request_count : "—"], ["允许", stats ? stats.allowed_count : "—"], ["拒绝", stats ? stats.denied_count : "—"], ["人工", stats ? stats.manual_review_count : "—"], ["绕过", stats ? stats.bypass_count : "—"], ["放行率", rate]]) { const card = element("div", "approval-stat"); card.append(element("div", "approval-label", label), element("div", "approval-value", text(value))); controls.summary.append(card); }
   };
-  const closeDetail = () => { controls.drawer.hidden = true; controls.drawer.replaceChildren(); };
-  const openDetail = (row) => {
+  const closeDetail = () => { state.detailRequestId = undefined; controls.drawer.hidden = true; controls.drawer.replaceChildren(); };
+  const showDetail = (row) => {
     const panel = element("section", "approval-drawer-panel"); const head = element("header", "approval-drawer-head"); const close = element("button", "approval-button", "关闭"); const view = renderDetail(row);
-    close.onclick = closeDetail; head.append(element("h2", "approval-card-title", "本会话审批详情"), close); panel.append(head, view.decision, view.details); controls.drawer.append(panel); controls.drawer.hidden = false;
+    close.onclick = closeDetail; head.append(element("h2", "approval-card-title", "本会话审批详情"), close); panel.append(head, view.decision, view.details); controls.drawer.replaceChildren(panel); controls.drawer.hidden = false;
+  };
+  const openDetail = (row) => { state.detailRequestId = row.request_id; showDetail(row); };
+  const refreshOpenDetail = () => {
+    if (!state.detailRequestId) return;
+    const row = state.rows?.find((candidate) => candidate.request_id === state.detailRequestId);
+    if (row) showDetail(row); else closeDetail();
   };
   const showRows = () => {
     controls.list.replaceChildren(); const rows = state.rows;
     if (!rows?.length) return controls.list.append(element("div", "approval-empty", rows ? "本会话暂无审批记录" : "尚未加载审批记录"));
     for (const row of rows) { const [label, tone] = decisionInfo(row); const card = element("button", "approval-row"); card.type = "button"; card.setAttribute("aria-label", `查看 ${text(row.tool_name)} 的审批详情`); const head = element("span", "approval-row-title"); const meta = [MODES[row.mode] || row.mode, row.risk_level ? `风险：${RISKS[row.risk_level] || row.risk_level}` : ""].filter(Boolean).join(" · "); head.append(element("strong", "", text(row.tool_name)), element("span", `approval-badge ${tone}`, label)); card.append(head, element("span", "approval-meta", meta), element("span", "approval-preview", text(row.command_preview || row.reason || "无补充说明")), element("span", "approval-meta", formatTime(row.created_at))); card.onclick = () => openDetail(row); controls.list.append(card); }
   };
-  const render = () => { showStats(); showRows(); };
+  const render = () => { showStats(); showRows(); refreshOpenDetail(); };
   const resetSession = (session) => { invalidate(); state.session = session; state.rows = undefined; state.stats = undefined; state.autoRefresh = false; closeDetail(); render(); };
   const validate = (rows, stats, session) => {
     const statisticKeys = ["approval_request_count", "allowed_count", "denied_count", "manual_review_count", "bypass_count", "allow_rate"];
     if (!Array.isArray(rows) || !isRecord(stats) || statisticKeys.some((key) => !Number.isFinite(stats[key])) || rows.some((row) => !isRecord(row) || row.session_id !== session)) throw new Error("审批主机返回了无效的会话数据");
     return { rows, stats };
   };
-  async function refresh() {
-    const session = sessionIdFrom(context); if (!session) { resetSession(undefined); status("进入会话后查看该会话的审批记录。"); return; }
-    if (session !== state.session) resetSession(session); const revision = ++state.revision; controls.refresh.disabled = true; status("正在加载本会话审批记录…");
+  async function refresh(options = {}) {
+    const queueIfInFlight = options.queueIfInFlight !== false; const session = sessionIdFrom(context);
+    if (!session) { resetSession(undefined); state.refreshQueued = false; controls.refresh.disabled = false; status("进入会话后查看该会话的审批记录。"); return; }
+    if (session !== state.session) resetSession(session);
+    if (state.refreshInFlight) { if (queueIfInFlight) state.refreshQueued = true; return; }
+    const revision = ++state.revision; state.refreshInFlight = true; controls.refresh.disabled = true; status("正在加载本会话审批记录…");
     try {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
       if (revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); status("");
-    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally { if (revision === state.revision) controls.refresh.disabled = false; }
+    } catch (error) { if (revision !== state.revision || state.session !== session) return; logFailure("approvals.workspace.refresh.failed"); state.autoRefresh = false; status(`加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+      state.refreshInFlight = false; const queued = state.refreshQueued; state.refreshQueued = false;
+      if (state.disposed) return;
+      if (queued) { void refresh(); return; }
+      controls.refresh.disabled = false;
+    }
   }
   const later = () => {
     window.clearTimeout(debounce);
@@ -201,5 +215,5 @@ export function activate(host) {
     select.onchange = () => { console.info("approvals.workspace.decision.changed", { decision: select.value || "all" }); state.decision = select.value; invalidate(); void refresh(); }; input.oninput = () => { state.tool = input.value.trim(); invalidate(); later(); }; toolbar.append(windowGroup, select, input); const stateText = element("p", "approval-status"); const list = element("div", "approval-list"); const drawer = element("aside", "approval-drawer"); drawer.hidden = true; drawer.onclick = (event) => { if (event.target === drawer) closeDetail(); }; card.append(head, toolbar, stateText, list); page.append(summary, card, drawer); root.append(page); controls = { summary, list, status: stateText, refresh: refreshButton, drawer, windows: windowGroup.querySelectorAll("button") }; updateWindows(); render(); console.info("approvals.workspace.mount");
   }
   function updateWindows() { controls.windows.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === state.window))); }
-  return { mount(nextRoot, nextContext) { root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); timer = window.setInterval(() => { if (state.autoRefresh && document.visibilityState === "visible") void refresh(); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
+  return { mount(nextRoot, nextContext) { root = nextRoot; context = nextContext; build(); themeSubscription = trackTheme(host); timer = window.setInterval(() => { if (state.autoRefresh && !state.refreshInFlight && document.visibilityState === "visible") void refresh({ queueIfInFlight: false }); }, AUTO_REFRESH_INTERVAL_MS); return refresh(); }, update(nextContext) { context = nextContext; if (sessionIdFrom(nextContext) !== state.session) { console.debug("approvals.workspace.context.changed"); return refresh(); } }, dispose() { console.debug("approvals.workspace.dispose"); state.disposed = true; state.refreshQueued = false; invalidate(); window.clearInterval(timer); window.clearTimeout(debounce); themeSubscription?.dispose(); } };
 }
