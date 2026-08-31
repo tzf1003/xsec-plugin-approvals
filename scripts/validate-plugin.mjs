@@ -18,6 +18,7 @@ const INTERFACE_KEYS = new Set(["displayName", "shortDescription", "longDescript
 const NAME_PATTERN = /^(?=.{1,64}$)[a-z0-9](?!.*(?:--|\.\.))[a-z0-9.-]*[a-z0-9]$|^[a-z0-9]$/;
 const ENTRYPOINT_COMPONENTS = /^[\x20-\x7e]+$/;
 const RPC_METHOD_PATTERN = /^xsec\.[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
+const REQUIRED_RPC_METHODS = new Set(["xsec.approvals.list", "xsec.approvals.statistics", "xsec.approvals.settings.get", "xsec.approvals.settings.set"]);
 const REQUIRED_ACTIVATIONS = new Map([
   ["onWorkspaceTool:approvals", "workspaceTools"],
   ["onSettingsPage:approvals", "settingsPages"],
@@ -204,12 +205,11 @@ function frontendRequestMethods(source) {
 
 async function validateFrontendRequests(extension) {
   const frontend = extension.entrypoints?.frontend;
-  if (!frontend) return;
+  if (!frontend || !extension.frontendApi) fail("approvals must declare a frontend entrypoint and frontendApi");
   const source = await readFile(resolve(PLUGIN_ROOT, frontend), "utf8");
   const used = frontendRequestMethods(source);
-  if (!extension.frontendApi && used.size) fail("frontend broker calls require a frontendApi declaration");
-  if (!extension.frontendApi) return;
   const declared = new Set(Object.keys(extension.frontendApi.methods));
+  for (const method of REQUIRED_RPC_METHODS) if (!declared.has(method)) fail(`approvals must declare frontend RPC ${method}`);
   for (const method of used) if (!declared.has(method)) fail(`frontend RPC ${method} is not declared in plugin.json`);
   for (const method of declared) if (!used.has(method)) fail(`plugin.json declares unused frontend RPC ${method}`);
 }
