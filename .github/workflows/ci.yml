@@ -14,7 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Require the dual plugin manifests
-        run: |
-          test -f plugins/com.xsec.workspace.approvals/plugin.json
-          test -f plugins/com.xsec.workspace.approvals/.codex-plugin/plugin.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=low
+      - name: Validate the Desktop plugin and marketplace manifests
+        run: npm run validate
