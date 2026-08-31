@@ -1,4 +1,5 @@
 import Ajv2020 from "ajv/dist/2020.js";
+import { parse } from "acorn";
 import semver from "semver";
 import { constants } from "node:fs";
 import { access, lstat, readFile, readdir, realpath } from "node:fs/promises";
@@ -16,6 +17,15 @@ const MARKET_KEYS = new Set(["name", "version", "description", "author", "licens
 const INTERFACE_KEYS = new Set(["displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "websiteURL", "defaultPrompt", "brandColor"]);
 const NAME_PATTERN = /^(?=.{1,64}$)[a-z0-9](?!.*(?:--|\.\.))[a-z0-9.-]*[a-z0-9]$|^[a-z0-9]$/;
 const ENTRYPOINT_COMPONENTS = /^[\x20-\x7e]+$/;
+const RPC_METHOD_PATTERN = /^xsec\.[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
+const REQUIRED_ACTIVATIONS = new Map([
+  ["onWorkspaceTool:approvals", "workspaceTools"],
+  ["onSettingsPage:approvals", "settingsPages"],
+]);
+const ACTIVATION_COLLECTIONS = new Map([
+  ["Command", "commands"], ["Route", "routes"], ["WorkspaceTool", "workspaceTools"],
+  ["AgentTool", "agentTools"], ["SettingsPage", "settingsPages"],
+]);
 
 function fail(message) {
   throw new Error(message);
@@ -79,8 +89,9 @@ function validateDesktopSchema(extension, schema) {
 }
 
 function rangeMeetsMinimum(range, version) {
-  const minimum = semver.minVersion(range);
-  return minimum !== null && semver.gte(minimum, version) && semver.intersects(range, `>=${version} <2.0.0`);
+  const normalized = range.split(",").map((part) => part.trim()).join(" ");
+  const minimum = semver.minVersion(normalized);
+  return minimum !== null && semver.gte(minimum, version) && semver.intersects(normalized, `>=${version} <2.0.0`);
 }
 
 function validateFrontendApi(extension) {
@@ -154,21 +165,69 @@ async function syntaxCheck(path) {
   });
 }
 
+function unwrapChain(node) {
+  return node?.type === "ChainExpression" ? node.expression : node;
+}
+
+function memberName(member) {
+  if (!member.computed && member.property.type === "Identifier") return member.property.name;
+  if (member.computed && member.property.type === "Literal" && typeof member.property.value === "string") return member.property.value;
+  return undefined;
+}
+
+function frontendRequestMethod(node) {
+  const callee = unwrapChain(node.callee);
+  if (node.type !== "CallExpression" || callee?.type !== "MemberExpression" || unwrapChain(callee.object)?.name !== "host" || memberName(callee) !== "request") return undefined;
+  const method = node.arguments[0];
+  if (method?.type !== "Literal" || typeof method.value !== "string" || !RPC_METHOD_PATTERN.test(method.value)) fail("frontend host.request calls must use literal XSEC RPC method names");
+  return method.value;
+}
+
+function visitAst(node, callback) {
+  if (!isRecord(node)) return;
+  callback(node);
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) value.forEach((entry) => visitAst(entry, callback));
+    else if (isRecord(value) && typeof value.type === "string") visitAst(value, callback);
+  }
+}
+
 function frontendRequestMethods(source) {
-  const calls = source.match(/\bhost\.request\(/g) ?? [];
-  const methods = [...source.matchAll(/\bhost\.request\(\s*["'](xsec\.[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)["']/g)]
-    .map((match) => match[1]);
-  if (calls.length !== methods.length) fail("frontend host.request calls must use literal XSEC RPC method names");
-  return new Set(methods);
+  const methods = new Set();
+  const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+  visitAst(program, (node) => {
+    const method = frontendRequestMethod(node);
+    if (method) methods.add(method);
+  });
+  return methods;
 }
 
 async function validateFrontendRequests(extension) {
-  if (!extension.frontendApi) return;
-  const source = await readFile(resolve(PLUGIN_ROOT, extension.entrypoints.frontend), "utf8");
+  const frontend = extension.entrypoints?.frontend;
+  if (!frontend) return;
+  const source = await readFile(resolve(PLUGIN_ROOT, frontend), "utf8");
   const used = frontendRequestMethods(source);
+  if (!extension.frontendApi && used.size) fail("frontend broker calls require a frontendApi declaration");
+  if (!extension.frontendApi) return;
   const declared = new Set(Object.keys(extension.frontendApi.methods));
   for (const method of used) if (!declared.has(method)) fail(`frontend RPC ${method} is not declared in plugin.json`);
   for (const method of declared) if (!used.has(method)) fail(`plugin.json declares unused frontend RPC ${method}`);
+}
+
+function activationTarget(event) {
+  const match = /^on(Command|Route|WorkspaceTool|AgentTool|SettingsPage):([a-z0-9][a-z0-9._-]*)$/.exec(event);
+  return match ? { collection: ACTIVATION_COLLECTIONS.get(match[1]), id: match[2] } : undefined;
+}
+
+function validateActivationContributions(extension) {
+  const events = new Set(extension.activationEvents ?? []);
+  for (const [event, collection] of REQUIRED_ACTIVATIONS) {
+    if (!events.has(event) || !extension.contributes?.[collection]?.approvals) fail(`approvals must retain ${event} and its ${collection}.approvals contribution`);
+  }
+  for (const event of events) {
+    const target = activationTarget(event);
+    if (target && !extension.contributes?.[target.collection]?.[target.id]) fail(`activation event ${event} has no matching contribution`);
+  }
 }
 
 function validateArchiveComponent(component, archivePath) {
@@ -224,6 +283,7 @@ async function main() {
   const extension = validateRootManifest(rootManifest);
   validateDesktopSchema(extension, schema);
   validateFrontendApi(extension);
+  validateActivationContributions(extension);
   await validateEntrypoints(extension);
   await validateFrontendRequests(extension);
   await validatePortableTree();
