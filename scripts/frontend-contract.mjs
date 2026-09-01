@@ -42,7 +42,7 @@ function isArgumentsReference(node, parent) {
   if (node?.type !== "Identifier" || node.name !== "arguments") return false;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
   if (parent?.type === "VariableDeclarator" && parent.id === node) return false;
-  if (parent?.type === "FunctionDeclaration" || parent?.type === "FunctionExpression" || parent?.type === "ArrowFunctionExpression") return false;
+  if (parent?.type === "FunctionDeclaration" || parent?.type === "FunctionExpression") return false;
   if (Array.isArray(parent?.params) && parent.params.includes(node)) return false;
   return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
 }
