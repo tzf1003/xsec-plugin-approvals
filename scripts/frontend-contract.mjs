@@ -38,6 +38,19 @@ function isHostReference(node, parent) {
   return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
 }
 
+function isArgumentsReference(node, parent) {
+  if (node?.type !== "Identifier" || node.name !== "arguments") return false;
+  if (parent?.type === "LabeledStatement" && parent.label === node) return false;
+  if ((parent?.type === "BreakStatement" || parent?.type === "ContinueStatement") && parent.label === node) return false;
+  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  if (["MethodDefinition", "PropertyDefinition", "FieldDefinition"].includes(parent?.type)
+    && parent.key === node && !parent.computed) return false;
+  if (parent?.type === "VariableDeclarator" && parent.id === node) return false;
+  if (parent?.type === "FunctionDeclaration" || parent?.type === "FunctionExpression") return false;
+  if (Array.isArray(parent?.params) && parent.params.includes(node)) return false;
+  return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
+}
+
 function isHostRequestMember(node) {
   return node?.type === "MemberExpression" && isHost(node.object) && memberName(node) === "request";
 }
@@ -82,6 +95,7 @@ function activationFunction(program) {
   const parameter = activation?.params?.[0];
   if (parameter?.type !== "Identifier" || parameter.name !== "host") fail("frontend activate function must receive the host parameter directly");
   if (activation.params.length !== 1) fail("frontend activate function must only receive the host parameter");
+  if (activation.generator) fail("frontend activate function cannot be a generator");
   return activation;
 }
 
@@ -132,6 +146,23 @@ function validateActivationScope(program, activation) {
   walk(program, undefined, false);
 }
 
+function validateActivationArguments(activation) {
+  const walk = (node, parent, functionDepth) => {
+    if (!isRecord(node)) return;
+    const nestedFunction = node !== activation.body
+      && ["FunctionDeclaration", "FunctionExpression"].includes(node.type);
+    if (functionDepth === 0 && isArgumentsReference(node, parent)) {
+      fail("frontend cannot access the activation arguments object");
+    }
+    const nextDepth = functionDepth + (nestedFunction ? 1 : 0);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach((entry) => walk(entry, node, nextDepth));
+      else if (isRecord(value) && typeof value.type === "string") walk(value, node, nextDepth);
+    }
+  };
+  walk(activation.body, undefined, 0);
+}
+
 function objectPatternReadsRequest(pattern) {
   return pattern?.type === "ObjectPattern"
     && pattern.properties.some((property) => property.type === "RestElement" || objectPropertyName(property) === "request");
@@ -164,6 +195,7 @@ export function frontendRequestMethods(source) {
   const activationParameter = activation.params[0];
   validateModuleStructure(program);
   validateActivationScope(program, activation);
+  validateActivationArguments(activation);
   visitAst(activation.body, (node, parent) => {
     validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
