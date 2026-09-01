@@ -43,6 +43,8 @@ function isArgumentsReference(node, parent) {
   if (parent?.type === "LabeledStatement" && parent.label === node) return false;
   if ((parent?.type === "BreakStatement" || parent?.type === "ContinueStatement") && parent.label === node) return false;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  if (["MethodDefinition", "PropertyDefinition", "FieldDefinition"].includes(parent?.type)
+    && parent.key === node && !parent.computed) return false;
   if (parent?.type === "VariableDeclarator" && parent.id === node) return false;
   if (parent?.type === "FunctionDeclaration" || parent?.type === "FunctionExpression") return false;
   if (Array.isArray(parent?.params) && parent.params.includes(node)) return false;
