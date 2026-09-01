@@ -19,5 +19,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=low
       - name: Validate the Desktop plugin and marketplace manifests
         run: npm run validate
