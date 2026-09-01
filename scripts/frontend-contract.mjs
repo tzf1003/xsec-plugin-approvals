@@ -81,6 +81,7 @@ function activationFunction(program) {
   const activation = program.body.find((node) => node.type === "ExportNamedDeclaration" && node.declaration?.type === "FunctionDeclaration" && node.declaration.id?.name === "activate")?.declaration;
   const parameter = activation?.params?.[0];
   if (parameter?.type !== "Identifier" || parameter.name !== "host") fail("frontend activate function must receive the host parameter directly");
+  if (activation.params.length !== 1) fail("frontend activate function must only receive the host parameter");
   return activation;
 }
 
