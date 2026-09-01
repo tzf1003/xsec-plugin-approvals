@@ -77,11 +77,21 @@ function validatesHostBinding(node, parent, activationParameter) {
   if (isHostReference(node, parent) && !(parent?.type === "MemberExpression" && parent.object === node)) fail("frontend host parameter can only be used as a direct member receiver");
 }
 
-function activationHostParameter(program) {
+function activationFunction(program) {
   const activation = program.body.find((node) => node.type === "ExportNamedDeclaration" && node.declaration?.type === "FunctionDeclaration" && node.declaration.id?.name === "activate")?.declaration;
   const parameter = activation?.params?.[0];
   if (parameter?.type !== "Identifier" || parameter.name !== "host") fail("frontend activate function must receive the host parameter directly");
-  return parameter;
+  if (activation.params.length !== 1) fail("frontend activate function must only receive the host parameter");
+  return activation;
+}
+
+function validateModuleStructure(program) {
+  visitAst(program, (node) => {
+    if (node.type === "ImportDeclaration" || node.type === "ImportExpression"
+      || ((node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") && node.source !== null)) {
+      fail("frontend must be a single ESM file without module dependencies");
+    }
+  });
 }
 
 function requestMethod(node) {
@@ -132,12 +142,10 @@ function validatesHostRequestUse(node, parent) {
 export function frontendRequestMethods(source) {
   const methods = new Set();
   const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
-  const activationParameter = activationHostParameter(program);
-  visitAst(program, (node, parent) => {
-    if (node.type === "ImportDeclaration" || node.type === "ImportExpression"
-      || ((node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") && node.source !== null)) {
-      fail("frontend must be a single ESM file without module dependencies");
-    }
+  const activation = activationFunction(program);
+  const activationParameter = activation.params[0];
+  validateModuleStructure(program);
+  visitAst(activation.body, (node, parent) => {
     validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
     if (node.type === "CallExpression") {
