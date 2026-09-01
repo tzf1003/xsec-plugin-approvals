@@ -23,3 +23,9 @@ jobs:
         run: npm audit --audit-level=low
       - name: Validate the Desktop plugin and marketplace manifests
         run: npm run validate
+
+  source-preflight:
+    needs: manifest
+    uses: tzf1003/xsec-plugins/.github/workflows/first-party-source-preflight.yml@main
+    with:
+      plugin_id: com.xsec.workspace.approvals
