@@ -23,7 +23,7 @@ function element(tag, className, text) {
 function isRecord(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function text(value) { return value === undefined || value === null || value === "" ? "—" : String(value); }
 function errorText(error) { return error instanceof Error ? error.message : String(error); }
-function logFailure(event) { console.error(event); }
+function logFailure(event, error) { console.error(event, { message: errorText(error) }); }
 function sessionIdFrom(context) {
   const id = context?.workspace?.session?.session_id || context?.workspace?.binding?.sessionId;
   return typeof id === "string" && id.trim() ? id : undefined;
@@ -106,11 +106,11 @@ export function activate(host) {
     const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
     async function readSettings() {
       try { return await host.request("xsec.approvals.settings.get", {}); }
-      catch (error) { logFailure("approvals.settings.load.failed"); throw error; }
+      catch (error) { logFailure("approvals.settings.load.failed", error); throw error; }
     }
     async function writeSettings(input) {
       try { return await host.request("xsec.approvals.settings.set", input); }
-      catch (error) { logFailure("approvals.settings.save.failed"); throw error; }
+      catch (error) { logFailure("approvals.settings.save.failed", error); throw error; }
     }
     async function load() {
       if (activeSave) { activeSave.reloadQueued = true; controls.retry.disabled = true; return; }
@@ -137,11 +137,11 @@ export function activate(host) {
       const saveState = { lifecycle: lifecycleRevision, reloadQueued: false, revision: ++loadRevision }; activeSave = saveState; console.info("approvals.settings.save.started", { fullAccessEnabled: fullAccess });
       try {
         const settings = await writeSettings({ autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
-        if (activeSave !== saveState || saveState.revision !== loadRevision) return;
+        if (activeSave !== saveState || saveState.revision !== loadRevision || disposed || saveState.lifecycle !== lifecycleRevision) return;
         applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); settingsReady = true;
         const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
         notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
-      } catch (error) { if (activeSave === saveState && saveState.revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
+      } catch (error) { if (activeSave === saveState && saveState.revision === loadRevision && !disposed && saveState.lifecycle === lifecycleRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
         if (activeSave !== saveState) return;
         activeSave = undefined;
         const shouldReload = saveState.reloadQueued && !disposed;
@@ -213,7 +213,7 @@ export function activate(host) {
       const sinceMs = state.window === "all" ? undefined : Date.now() - WINDOW_MS[state.window];
       const [list, stats] = await Promise.all([host.request("xsec.approvals.list", { decision: state.decision || undefined, toolName: state.tool || undefined, sinceMs, limit: 200 }), host.request("xsec.approvals.statistics", state.window === "all" ? {} : { window: state.window })]);
       if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; const result = validate(list, stats, session); state.rows = result.rows; state.stats = result.stats; state.autoRefresh = true; render(); if (!silent) status("");
-    } catch (error) { if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; state.autoRefresh = false; logFailure("approvals.workspace.refresh.failed"); status(silent ? "自动刷新已暂停；请点击刷新重试。" : `加载本会话审批记录失败：${errorText(error)}`, true); } finally {
+    } catch (error) { if (mountRevision !== state.mountRevision || revision !== state.revision || state.session !== session) return; state.autoRefresh = false; logFailure("approvals.workspace.refresh.failed", error); status(silent ? "自动刷新已暂停；请点击刷新重试。" : `加载本会话审批记录失败：${errorText(error)}`, true); } finally {
       if (mountRevision !== state.mountRevision || state.disposed) return;
       state.refreshInFlight = false; const queued = state.refreshQueued; state.refreshQueued = false;
       if (queued) { void refresh(); return; }
