@@ -146,7 +146,7 @@ function validateActivationArguments(activation) {
   const walk = (node, parent, functionDepth) => {
     if (!isRecord(node)) return;
     const nestedFunction = node !== activation.body
-      && ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type);
+      && ["FunctionDeclaration", "FunctionExpression"].includes(node.type);
     if (functionDepth === 0 && isArgumentsReference(node, parent)) {
       fail("frontend cannot access the activation arguments object");
     }

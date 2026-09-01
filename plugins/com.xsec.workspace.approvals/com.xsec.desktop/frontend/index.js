@@ -102,7 +102,7 @@ function detailFingerprint(row) {
 
 export function activate(host) {
   function settingsPage() {
-    let root; let controls; let ready = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let activeSave; let disposed = false; let lifecycleRevision = 0;
+    let root; let controls; let settingsReady = false; let themeSubscription; let loadRevision = 0; let contextKey = settingsContextKey(host.context); let activeSave; let disposed = false; let lifecycleRevision = 0;
     const notice = (message, failed = false) => { controls.notice.textContent = message; controls.notice.dataset.tone = failed ? "error" : ""; };
     async function readSettings() {
       try { return await host.request("xsec.approvals.settings.get", {}); }
@@ -114,18 +114,18 @@ export function activate(host) {
     }
     async function load() {
       const revision = ++loadRevision;
-      ready = false; controls.save.disabled = true; controls.retry.disabled = true; notice("正在读取审批设置…");
+      settingsReady = false; controls.save.disabled = true; controls.retry.disabled = true; notice("正在读取审批设置…");
       console.info("approvals.settings.load.started");
       try {
         const settings = await readSettings();
         if (revision !== loadRevision) return;
         applySettings(controls, settings);
-        showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true; controls.save.disabled = false; notice("");
+        showResolvedModel(controls, settings); showSettingsOverview(controls, settings); settingsReady = true; controls.save.disabled = false; notice("");
         console.info("approvals.settings.load.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
       } catch (error) { if (revision === loadRevision) notice(`读取审批设置失败：${errorText(error)}`, true); } finally { if (revision === loadRevision) controls.retry.disabled = false; }
     }
     async function save() {
-      if (!ready) return notice("请先成功读取当前审批设置后再保存。", true);
+      if (!settingsReady) return notice("请先成功读取当前审批设置后再保存。", true);
       const fullAccess = controls.full.checked; const acknowledged = fullAccess && controls.confirm.value === FULL_ACCESS_CONFIRMATION;
       const thresholdText = controls.threshold.value.trim(); const threshold = Number(thresholdText);
       const timeoutText = controls.timeout.value.trim(); const timeoutMs = Number(timeoutText);
@@ -137,7 +137,7 @@ export function activate(host) {
       try {
         const settings = await writeSettings({ autoEnabled: controls.auto.checked, fullAccess, allowLocalReadonly: controls.readonly.checked, lowConfidenceThreshold: threshold, llm: { model: controls.model.value.trim(), timeoutMs, temperature: 0 }, fullAccessAcknowledged: acknowledged });
         if (activeSave !== saveState || saveState.revision !== loadRevision) return;
-        applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); ready = true;
+        applySettings(controls, settings); showResolvedModel(controls, settings); showSettingsOverview(controls, settings); settingsReady = true;
         const saved = "已保存。审批授权和只读放行立即生效；新会话默认策略仅影响之后创建的会话。";
         notice(saved); console.info("approvals.settings.save.completed", { fullAccessEnabled: settings.full_access, usesDefaultModel: settings.llm.use_default_model });
       } catch (error) { if (activeSave === saveState && saveState.revision === loadRevision) notice(`保存审批设置失败：${errorText(error)}`, true); } finally {
@@ -145,7 +145,7 @@ export function activate(host) {
         activeSave = undefined;
         const shouldReload = saveState.reloadQueued && !disposed;
         if (shouldReload) void load();
-        else if (!disposed && saveState.lifecycle === lifecycleRevision && saveState.revision === loadRevision) { controls.save.disabled = !ready; controls.retry.disabled = false; }
+        else if (!disposed && saveState.lifecycle === lifecycleRevision && saveState.revision === loadRevision) { controls.save.disabled = !settingsReady; controls.retry.disabled = false; }
       }
     }
     function field(title, input) { const label = element("label", "", title); label.append(input); return label; }
