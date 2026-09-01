@@ -114,6 +114,24 @@ function visitAst(node, callback, parent) {
   }
 }
 
+function validateActivationScope(program, activation) {
+  const walk = (node, parent, insideActivation) => {
+    if (!isRecord(node)) return;
+    const inScope = insideActivation || node === activation.body;
+    if (node.type === "CallExpression") {
+      const callee = unwrapChain(node.callee);
+      if (isHostRequestMember(callee) && !inScope) {
+        fail("frontend host.request calls must be inside activate");
+      }
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach((entry) => walk(entry, node, inScope));
+      else if (isRecord(value) && typeof value.type === "string") walk(value, node, inScope);
+    }
+  };
+  walk(program, undefined, false);
+}
+
 function objectPatternReadsRequest(pattern) {
   return pattern?.type === "ObjectPattern"
     && pattern.properties.some((property) => property.type === "RestElement" || objectPropertyName(property) === "request");
@@ -145,6 +163,7 @@ export function frontendRequestMethods(source) {
   const activation = activationFunction(program);
   const activationParameter = activation.params[0];
   validateModuleStructure(program);
+  validateActivationScope(program, activation);
   visitAst(activation.body, (node, parent) => {
     validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
