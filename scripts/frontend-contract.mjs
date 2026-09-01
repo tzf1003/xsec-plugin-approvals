@@ -40,6 +40,8 @@ function isHostReference(node, parent) {
 
 function isArgumentsReference(node, parent) {
   if (node?.type !== "Identifier" || node.name !== "arguments") return false;
+  if (parent?.type === "LabeledStatement" && parent.label === node) return false;
+  if ((parent?.type === "BreakStatement" || parent?.type === "ContinueStatement") && parent.label === node) return false;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
   if (parent?.type === "VariableDeclarator" && parent.id === node) return false;
   if (parent?.type === "FunctionDeclaration" || parent?.type === "FunctionExpression") return false;
