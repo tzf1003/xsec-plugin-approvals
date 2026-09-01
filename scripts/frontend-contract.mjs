@@ -38,6 +38,12 @@ function isHostReference(node, parent) {
   return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
 }
 
+function isArgumentsReference(node, parent) {
+  if (node?.type !== "Identifier" || node.name !== "arguments") return false;
+  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  return !(parent?.type === "Property" && parent.key === node && !parent.computed && parent.value !== node);
+}
+
 function isHostRequestMember(node) {
   return node?.type === "MemberExpression" && isHost(node.object) && memberName(node) === "request";
 }
@@ -82,6 +88,7 @@ function activationFunction(program) {
   const parameter = activation?.params?.[0];
   if (parameter?.type !== "Identifier" || parameter.name !== "host") fail("frontend activate function must receive the host parameter directly");
   if (activation.params.length !== 1) fail("frontend activate function must only receive the host parameter");
+  if (activation.generator) fail("frontend activate function cannot be a generator");
   return activation;
 }
 
@@ -165,6 +172,7 @@ export function frontendRequestMethods(source) {
   validateModuleStructure(program);
   validateActivationScope(program, activation);
   visitAst(activation.body, (node, parent) => {
+    if (isArgumentsReference(node, parent)) fail("frontend cannot access the activation arguments object");
     validatesHostBinding(node, parent, activationParameter);
     validatesHostRequestUse(node, parent);
     if (node.type === "CallExpression") {
