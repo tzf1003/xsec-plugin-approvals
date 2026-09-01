@@ -21,3 +21,9 @@ the marketplace descriptor. It also syntax-checks the production frontend.
 The schema snapshot is sourced from `desktop/packages/plugin-api/schemas/` in
 the matching XSEC Desktop source revision. Update it together with the semantic
 checks whenever Desktop changes the plugin contract.
+
+## Release provenance
+
+Factory records the exact Beta and Stable source revisions with each immutable
+Approvals release. Published source revisions include the declared frontend
+artifact validated by the source-validation command.
