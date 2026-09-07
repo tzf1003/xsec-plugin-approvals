@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://xsec.dev/schemas/plugin/com.xsec.desktop/1.json",
-  "title": "XSEC Desktop Plugin Extension v1",
+  "$id": "https://xsec.dev/schemas/plugin/com.xsec.desktop/2.json",
+  "title": "XSEC Desktop Plugin Extension v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "displayName", "publisher", "engines"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "displayName": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*" },
     "publisher": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*" },
     "icon": { "type": "string", "minLength": 1 },

@@ -1,12 +1,12 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "com.xsec.workspace.approvals",
-  "version": "1.3.4",
+  "version": "2.0.0",
   "description": "XSEC session approval workspace tool",
   "author": { "name": "XSEC" },
   "license": "MIT",
   "extensions": { "com.xsec.desktop": {
-    "schemaVersion": 1, "displayName": "审批记录", "publisher": "XSEC", "icon": "clipboard-check",
+    "schemaVersion": 2, "displayName": "审批记录", "publisher": "XSEC", "icon": "clipboard-check",
     "engines": { "xsec": ">=0.1.0", "pluginApi": "^1.2.0" },
     "entrypoints": { "frontend": "./com.xsec.desktop/frontend/index.js" },
     "activationEvents": ["onWorkspaceTool:approvals", "onSettingsPage:approvals"],

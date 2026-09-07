@@ -27,3 +27,12 @@ checks whenever Desktop changes the plugin contract.
 Factory records the exact Beta and Stable source revisions with each immutable
 Approvals release. Published source revisions include the declared frontend
 artifact validated by the source-validation command.
+
+## Host boundary
+
+The root manifest uses Agent Plugins v1 with a `com.xsec.desktop` schema v2
+extension. Approvals remains a Host package: its four frontend methods list
+Desktop-owned approval records and statistics, and read or write plugin
+settings. Approval decisions, policy evaluation and audit records remain under
+the Desktop session and capability boundary; this package has no portable MCP
+server, Skill or `agentTools` declaration.
