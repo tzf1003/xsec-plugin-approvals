@@ -8,6 +8,8 @@ import { frontendRequestMethods } from "./frontend-contract.mjs";
 
 const PLUGIN_ID = "com.xsec.workspace.approvals";
 const SCHEMA_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+const PLUGIN_VERSION = "2.0.0";
+const EXTENSION_SCHEMA_VERSION = 2;
 const BACKSLASH = "\\";
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PLUGIN_ROOT = resolve(process.argv[2] ?? ROOT);
@@ -92,6 +94,11 @@ function validateDesktopSchema(extension, schema) {
   if (validate(extension)) return;
   const details = (validate.errors ?? []).map((error) => `${error.instancePath || "$"} ${error.message}`).join("; ");
   fail(`XSEC Desktop extension violates the pinned Desktop schema: ${details}`);
+}
+
+function validateHostOnlyBoundary(extension) {
+  if (extension.schemaVersion !== EXTENSION_SCHEMA_VERSION) fail("approvals must use the schema v2 Desktop extension");
+  if (extension.contributes?.agentTools !== undefined) fail("approvals must not declare agentTools");
 }
 
 function rangeMeetsMinimum(range, version) {
@@ -254,8 +261,10 @@ async function main() {
     readJson(`${PLUGIN_ROOT}/.codex-plugin/plugin.json`, "marketplace metadata"),
   ]);
   const rootManifest = requireRecord(manifest, "plugin.json");
+  if (rootManifest.version !== PLUGIN_VERSION) fail(`approvals must use version ${PLUGIN_VERSION}`);
   const extension = validateRootManifest(rootManifest);
   validateDesktopSchema(extension, schema);
+  validateHostOnlyBoundary(extension);
   validateFrontendApi(extension);
   validateActivationContributions(extension);
   await validateEntrypoints(extension);
